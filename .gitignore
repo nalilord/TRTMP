@@ -80,3 +80,33 @@ __recovery/
 
 # Boss dependency manager vendor folder https://github.com/HashLoad/boss
 modules/
+
+# Linux/FPC build outputs
+/Bin/
+/Temp/
+/Scripts/
+*.o
+*.or
+*.ppu
+*.a
+ppas.sh
+link*.res
+
+# Delphi build outputs
+/Bin/win64/*.dcu
+/Bin/win64/*.exe
+/Bin/win64/*.rsm
+/Bin/win64/*.map
+/Bin/win64/*.identcache
+/Bin/win64/*.local
+
+# Runtime logs
+*.log
+
+# Local third-party checkout/build products
+/ThirdParty/
+
+# Accidental Windows device-file placeholder
+/nul
+.agents/
+.codex/
