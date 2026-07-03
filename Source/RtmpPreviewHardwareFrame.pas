@@ -45,6 +45,7 @@ type
     function GetDrmFormat: UInt32;
     function GetHeight: Integer;
     function GetKind: TRtmpPreviewHardwareFrameKind;
+    function GetLayerFormat(ALayerIndex: Integer): UInt32;
     function GetLayerCount: Integer;
     function GetObjectCount: Integer;
     function GetObjectFd(AIndex: Integer): Integer;
@@ -88,6 +89,7 @@ type
     function GetDrmFormat: UInt32;
     function GetHeight: Integer;
     function GetKind: TRtmpPreviewHardwareFrameKind;
+    function GetLayerFormat(ALayerIndex: Integer): UInt32;
     function GetLayerCount: Integer;
     function GetObjectCount: Integer;
     function GetObjectFd(AIndex: Integer): Integer;
@@ -154,6 +156,14 @@ end;
 function TRtmpPreviewDrmPrimeHardwareFrame.GetKind: TRtmpPreviewHardwareFrameKind;
 begin
   Result := phfkDrmPrime;
+end;
+
+function TRtmpPreviewDrmPrimeHardwareFrame.GetLayerFormat(
+  ALayerIndex: Integer): UInt32;
+begin
+  if (ALayerIndex < 0) or (ALayerIndex >= FLayerCount) then
+    Exit(0);
+  Result := FLayers[ALayerIndex].Format;
 end;
 
 function TRtmpPreviewDrmPrimeHardwareFrame.GetLayerCount: Integer;

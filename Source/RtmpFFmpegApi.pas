@@ -26,6 +26,7 @@ type
     class function AllocFrame: PAVFrame; static;
     class function AllocPacket: PAVPacket; static;
     class function FindDecoder(AID: TAVCodecID): PAVCodec; static;
+    class function FindDecoderByName(const AName: AnsiString): PAVCodec; static;
     class procedure FlushDecoder(AContext: PAVCodecContext); static;
     class procedure FreeDecoderContext(var AContext: PAVCodecContext); static;
     class procedure FreeFrame(var AFrame: PAVFrame); static;
@@ -63,6 +64,12 @@ end;
 class function TRtmpFFmpegApi.FindDecoder(AID: TAVCodecID): PAVCodec;
 begin
   Result := avcodec_find_decoder(AID);
+end;
+
+class function TRtmpFFmpegApi.FindDecoderByName(
+  const AName: AnsiString): PAVCodec;
+begin
+  Result := avcodec_find_decoder_by_name(PAnsiChar(AName));
 end;
 
 class procedure TRtmpFFmpegApi.FlushDecoder(AContext: PAVCodecContext);

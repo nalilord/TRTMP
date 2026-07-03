@@ -45,7 +45,8 @@ type
     ppfUnknown,
     ppfRgba32,
     ppfDrmPrime,
-    ppfYuv420p
+    ppfYuv420p,
+    ppfNv12
   );
 
   TRtmpPreviewPlaneInfo = record
@@ -61,6 +62,7 @@ type
     OutputPixelFormat: TAVPixelFormat;
     DecoderThreadCount: Integer;
     DecoderThreadMode: TRtmpDecoderThreadMode;
+    DecoderHardwareMode: TRtmpDecoderHardwareMode;
     PassthroughHardwareFrames: Boolean;
     SelectionMode: TRtmpPreviewStreamSelectionMode;
     TargetStreamName: string;
@@ -238,6 +240,8 @@ begin
       Result := ppfDrmPrime;
     AV_PIX_FMT_YUV420P:
       Result := ppfYuv420p;
+    AV_PIX_FMT_NV12:
+      Result := ppfNv12;
   else
     Result := ppfUnknown;
   end;
@@ -251,6 +255,7 @@ begin
   Result.OutputPixelFormat := AV_PIX_FMT_RGBA;
   Result.DecoderThreadCount := 1;
   Result.DecoderThreadMode := dtmAuto;
+  Result.DecoderHardwareMode := dhmAuto;
   Result.PassthroughHardwareFrames := False;
   Result.SelectionMode := psmFirstActive;
   Result.TargetStreamName := '';
@@ -268,6 +273,8 @@ begin
       Result := 'drm_prime';
     ppfYuv420p:
       Result := 'yuv420p';
+    ppfNv12:
+      Result := 'nv12';
   else
     Result := 'unknown';
   end;
@@ -281,6 +288,7 @@ begin
   FDecoder := TRtmpFFmpegPacketDecoder.Create;
   FDrainFrame := TRtmpFFmpegApi.AllocFrame;
   FDecoder.ThreadCount := FConfig.DecoderThreadCount;
+  FDecoder.HardwareMode := FConfig.DecoderHardwareMode;
   FDecoder.PassthroughHardwareFrames := FConfig.PassthroughHardwareFrames;
   FLatestVideoConfig := nil;
   FLock := TCriticalSection.Create;
@@ -378,7 +386,17 @@ end;
 
 procedure TRtmpPreview.ClearSelection;
 begin
-  FollowFirstActive;
+  FLock.Acquire;
+  try
+    FConfig.SelectionMode := psmFirstActive;
+    FConfig.TargetStreamName := '';
+    ClearActiveSelectionLocked;
+    ClearPacketQueueLocked;
+    FResetPending := True;
+  finally
+    FLock.Release;
+  end;
+  EmitLog(llInfo, 'preview', 'Selection cleared; waiting for first active stream');
 end;
 
 procedure TRtmpPreview.DrainDecodeFrames;
@@ -479,6 +497,8 @@ begin
           finally
             FLock.Release;
           end;
+          if FDecoder.HardwareDeviceName <> '' then
+            EmitLog(llInfo, 'preview', 'Hardware decode active: ' + FDecoder.HardwareDeviceName);
         end
         else
           EmitLog(llWarning, 'preview', 'Video config open failed: ' + FDecoder.LastErrorText);
@@ -534,6 +554,8 @@ begin
           finally
             FLock.Release;
           end;
+          if FDecoder.HardwareDeviceName <> '' then
+            EmitLog(llInfo, 'preview', 'Hardware decode active: ' + FDecoder.HardwareDeviceName);
         end
         else
         begin
@@ -1082,6 +1104,7 @@ begin
   end;
   FDecoder.ThreadCount := FConfig.DecoderThreadCount;
   FDecoder.ThreadMode := FConfig.DecoderThreadMode;
+  FDecoder.HardwareMode := FConfig.DecoderHardwareMode;
   FDecoder.PassthroughHardwareFrames := FConfig.PassthroughHardwareFrames;
 
   FLock.Acquire;

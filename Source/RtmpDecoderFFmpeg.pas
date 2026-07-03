@@ -32,6 +32,15 @@ type
     dtmFrame
   );
 
+  TRtmpDecoderHardwareMode = (
+    dhmAuto,
+    dhmOff,
+    dhmVaapi,
+    dhmQsv,
+    dhmV4L2Request,
+    dhmDrm
+  );
+
   TRtmpFFmpegPacketDecoder = class
   private
     FCodec: PAVCodec;
@@ -42,6 +51,8 @@ type
     FHardwareDecodeActive: Boolean;
     FHardwareDecodeEnabled: Boolean;
     FHardwareDeviceCtx: PAVBufferRef;
+    FHardwareMode: TRtmpDecoderHardwareMode;
+    FHardwareDeviceName: string;
     FHardwarePixelFormat: TAVPixelFormat;
     FIsOpen: Boolean;
     FLastErrorCode: Integer;
@@ -56,10 +67,18 @@ type
       out AConverted: TBytes): Boolean;
     {$IFDEF UNIX}
     function ActivateLinuxHardwareDecode: Boolean;
-    function SupportsLinuxHardwareDecode: Boolean;
+    function TryActivateLinuxHardwareDecode(const ADeviceName,
+      APreferredDevice: AnsiString): Boolean;
+    function TryCreateHardwareDevice(ADeviceType: TAVHWDeviceType;
+      const APreferredDevice: AnsiString): Boolean;
+    function SupportsLinuxHardwareDecode(ADeviceType: TAVHWDeviceType;
+      out APixelFormat: TAVPixelFormat): Boolean;
     {$ENDIF}
     function CodecIDForKind(ACodecKind: TRtmpDecoderCodec): TAVCodecID;
+    function PreferredDecoderName(AMediaKind: TRtmpDecoderMediaKind;
+      ACodecKind: TRtmpDecoderCodec): AnsiString;
     function HandleHardwareFrameTransfer: Integer;
+    function MapHardwareFrameToDrmPrime: Integer;
     procedure ResetError;
     procedure ResetHardwareDecode;
     function SelectPixelFormat(const AFmt: PAVPixelFormat): TAVPixelFormat;
@@ -82,6 +101,8 @@ type
     property CodecContext: PAVCodecContext read FCodecContext;
     property CodecKind: TRtmpDecoderCodec read FCodecKind;
     property Frame: PAVFrame read FFrame;
+    property HardwareDeviceName: string read FHardwareDeviceName;
+    property HardwareMode: TRtmpDecoderHardwareMode read FHardwareMode write FHardwareMode;
     property IsOpen: Boolean read FIsOpen;
     property LastErrorCode: Integer read FLastErrorCode;
     property LastErrorText: string read FLastErrorText;
@@ -93,6 +114,11 @@ type
   end;
 
 implementation
+
+{$IFDEF UNIX}
+uses
+  FfmpegLinuxV4L2RequestTypes;
+{$ENDIF}
 
 function RtmpDecoderGetFormat(s: PAVCodecContext; const fmt: PAVPixelFormat): TAVPixelFormat; cdecl;
 var
@@ -118,6 +144,8 @@ begin
   FHardwareDecodeActive := False;
   FHardwareDecodeEnabled := False;
   FHardwareDeviceCtx := nil;
+  FHardwareMode := dhmAuto;
+  FHardwareDeviceName := '';
   FHardwarePixelFormat := AV_PIX_FMT_NONE;
   FMediaKind := dmUnknown;
   FCodecKind := dcUnknown;
@@ -224,6 +252,19 @@ begin
   end;
 end;
 
+function TRtmpFFmpegPacketDecoder.PreferredDecoderName(
+  AMediaKind: TRtmpDecoderMediaKind; ACodecKind: TRtmpDecoderCodec): AnsiString;
+begin
+  Result := '';
+  if (AMediaKind <> dmVideo) or (ACodecKind <> dcAVC) then
+    Exit;
+
+  case FHardwareMode of
+    dhmQsv:
+      Result := '';
+  end;
+end;
+
 procedure TRtmpFFmpegPacketDecoder.Flush;
 begin
   if not Assigned(FCodecContext) then
@@ -238,17 +279,41 @@ end;
 
 {$IFDEF UNIX}
 function TRtmpFFmpegPacketDecoder.ActivateLinuxHardwareDecode: Boolean;
+begin
+  case FHardwareMode of
+    dhmOff:
+      Result := False;
+    dhmVaapi:
+      Result := TryActivateLinuxHardwareDecode('vaapi', '/dev/dri/renderD128');
+    dhmQsv:
+      Result := TryActivateLinuxHardwareDecode('qsv', '');
+    dhmV4L2Request:
+      Result := TryActivateLinuxHardwareDecode('v4l2request', '');
+    dhmDrm:
+      Result := TryActivateLinuxHardwareDecode('drm', '/dev/dri/renderD128');
+  else
+    Result :=
+      TryActivateLinuxHardwareDecode('vaapi', '/dev/dri/renderD128') or
+      TryActivateLinuxHardwareDecode('qsv', '') or
+      TryActivateLinuxHardwareDecode('v4l2request', '') or
+      TryActivateLinuxHardwareDecode('drm', '/dev/dri/renderD128');
+  end;
+end;
+
+function TRtmpFFmpegPacketDecoder.TryActivateLinuxHardwareDecode(
+  const ADeviceName, APreferredDevice: AnsiString): Boolean;
 var
   DeviceType: TAVHWDeviceType;
-  ErrorCode: Integer;
+  PixelFormat: TAVPixelFormat;
 begin
   Result := False;
-  if not SupportsLinuxHardwareDecode then
-    Exit;
 
-  DeviceType := av_hwdevice_find_type_by_name('v4l2request');
-  ErrorCode := av_hwdevice_ctx_create(@FHardwareDeviceCtx, DeviceType, nil, nil, 0);
-  if ErrorCode < 0 then
+  DeviceType := av_hwdevice_find_type_by_name(PAnsiChar(ADeviceName));
+  if Ord(DeviceType) = Ord(AV_HWDEVICE_TYPE_NONE) then
+    Exit;
+  if not SupportsLinuxHardwareDecode(DeviceType, PixelFormat) then
+    Exit;
+  if not TryCreateHardwareDevice(DeviceType, APreferredDevice) then
     Exit;
 
   FCodecContext^.hw_device_ctx := av_buffer_ref(FHardwareDeviceCtx);
@@ -260,8 +325,37 @@ begin
 
   FCodecContext^.opaque := Self;
   FCodecContext^.get_format := @RtmpDecoderGetFormat;
+  FHardwarePixelFormat := PixelFormat;
+  FHardwareDeviceName := string(ADeviceName);
   FHardwareDecodeEnabled := True;
   Result := True;
+end;
+
+function TRtmpFFmpegPacketDecoder.TryCreateHardwareDevice(
+  ADeviceType: TAVHWDeviceType; const APreferredDevice: AnsiString): Boolean;
+var
+  ErrorCode: Integer;
+begin
+  Result := False;
+
+  if Assigned(FHardwareDeviceCtx) then
+    av_buffer_unref(@FHardwareDeviceCtx);
+
+  if APreferredDevice <> '' then
+  begin
+    ErrorCode := av_hwdevice_ctx_create(@FHardwareDeviceCtx, ADeviceType,
+      PAnsiChar(APreferredDevice), nil, 0);
+    if ErrorCode >= 0 then
+      Exit(True);
+
+    if Assigned(FHardwareDeviceCtx) then
+      av_buffer_unref(@FHardwareDeviceCtx);
+  end;
+
+  ErrorCode := av_hwdevice_ctx_create(@FHardwareDeviceCtx, ADeviceType, nil, nil, 0);
+  Result := ErrorCode >= 0;
+  if (not Result) and Assigned(FHardwareDeviceCtx) then
+    av_buffer_unref(@FHardwareDeviceCtx);
 end;
 {$ENDIF}
 
@@ -271,6 +365,7 @@ var
   Extradata: TBytes;
   MediaKind: TRtmpDecoderMediaKind;
   CodecKind: TRtmpDecoderCodec;
+  DecoderName: AnsiString;
 begin
   Result := False;
   ResetError;
@@ -290,7 +385,13 @@ begin
 
   Close;
 
-  FCodec := TRtmpFFmpegApi.FindDecoder(CodecID);
+  DecoderName := PreferredDecoderName(MediaKind, CodecKind);
+  if DecoderName <> '' then
+    FCodec := TRtmpFFmpegApi.FindDecoderByName(DecoderName)
+  else
+    FCodec := nil;
+  if not Assigned(FCodec) then
+    FCodec := TRtmpFFmpegApi.FindDecoder(CodecID);
   if not Assigned(FCodec) then
   begin
     SetError(AVERROR_DECODER_NOT_FOUND, 'Decoder not found');
@@ -320,13 +421,14 @@ begin
     FCodecContext^.thread_type := FF_THREAD_SLICE or FF_THREAD_FRAME;
   end;
   FCodecContext^.flags := FCodecContext^.flags or AV_CODEC_FLAG_LOW_DELAY;
-  FCodecContext^.flags2 := FCodecContext^.flags2 or AV_CODEC_FLAG2_FAST or
-    AV_CODEC_FLAG2_CHUNKS;
+  FCodecContext^.flags2 := FCodecContext^.flags2 or AV_CODEC_FLAG2_FAST;
 
   {$IFDEF UNIX}
   if MediaKind = dmVideo then
     ActivateLinuxHardwareDecode;
   {$ENDIF}
+  if not FHardwareDecodeEnabled then
+    FCodecContext^.flags2 := FCodecContext^.flags2 or AV_CODEC_FLAG2_CHUNKS;
 
   FLastErrorCode := TRtmpFFmpegApi.LoadExtradata(FCodecContext, Extradata);
   if FLastErrorCode < 0 then
@@ -386,7 +488,17 @@ begin
       if FPassthroughHardwareFrames then
       begin
         TRtmpFFmpegApi.UnrefFrame(FFrame);
-        av_frame_move_ref(FFrame, FDecodeFrame);
+        if FDecodeFrame^.format = Ord(AV_PIX_FMT_DRM_PRIME) then
+          av_frame_move_ref(FFrame, FDecodeFrame)
+        else
+        begin
+          Result := MapHardwareFrameToDrmPrime;
+          if Result < 0 then
+          begin
+            SetError(Result, 'Failed to map hardware decoded frame to DRM_PRIME');
+            Exit;
+          end;
+        end;
       end
       else
       begin
@@ -449,6 +561,37 @@ begin
   FFrame^.nb_samples := FDecodeFrame^.nb_samples;
 end;
 
+function TRtmpFFmpegPacketDecoder.MapHardwareFrameToDrmPrime: Integer;
+begin
+  TRtmpFFmpegApi.UnrefFrame(FFrame);
+  FFrame^.format := Ord(AV_PIX_FMT_DRM_PRIME);
+  FFrame^.width := FDecodeFrame^.width;
+  FFrame^.height := FDecodeFrame^.height;
+
+  Result := av_hwframe_map(FFrame, FDecodeFrame,
+    Ord(AV_HWFRAME_MAP_READ) or Ord(AV_HWFRAME_MAP_DIRECT));
+  if Result < 0 then
+  begin
+    TRtmpFFmpegApi.UnrefFrame(FFrame);
+    Exit;
+  end;
+
+  Result := av_frame_copy_props(FFrame, FDecodeFrame);
+  if Result < 0 then
+  begin
+    TRtmpFFmpegApi.UnrefFrame(FFrame);
+    Exit;
+  end;
+
+  FFrame^.pts := FDecodeFrame^.pts;
+  FFrame^.pkt_dts := FDecodeFrame^.pkt_dts;
+  FFrame^.best_effort_timestamp := FDecodeFrame^.best_effort_timestamp;
+  FFrame^.flags := FDecodeFrame^.flags;
+  FFrame^.sample_rate := FDecodeFrame^.sample_rate;
+  FFrame^.ch_layout := FDecodeFrame^.ch_layout;
+  FFrame^.nb_samples := FDecodeFrame^.nb_samples;
+end;
+
 procedure TRtmpFFmpegPacketDecoder.ResetError;
 begin
   FLastErrorCode := 0;
@@ -459,6 +602,7 @@ procedure TRtmpFFmpegPacketDecoder.ResetHardwareDecode;
 begin
   FHardwareDecodeActive := False;
   FHardwareDecodeEnabled := False;
+  FHardwareDeviceName := '';
   FHardwarePixelFormat := AV_PIX_FMT_NONE;
   if Assigned(FCodecContext) then
   begin
@@ -505,18 +649,15 @@ begin
 end;
 
 {$IFDEF UNIX}
-function TRtmpFFmpegPacketDecoder.SupportsLinuxHardwareDecode: Boolean;
+function TRtmpFFmpegPacketDecoder.SupportsLinuxHardwareDecode(
+  ADeviceType: TAVHWDeviceType; out APixelFormat: TAVPixelFormat): Boolean;
 var
   Config: PAVCodecHWConfig;
-  DeviceType: TAVHWDeviceType;
   Index: Integer;
 begin
   Result := False;
+  APixelFormat := AV_PIX_FMT_NONE;
   if not Assigned(FCodec) then
-    Exit;
-
-  DeviceType := av_hwdevice_find_type_by_name('v4l2request');
-  if DeviceType = AV_HWDEVICE_TYPE_NONE then
     Exit;
 
   Index := 0;
@@ -526,11 +667,11 @@ begin
     if not Assigned(Config) then
       Exit;
 
-    if (Config^.pix_fmt = AV_PIX_FMT_DRM_PRIME) and
-       (Config^.device_type = DeviceType) and
+    if (Ord(Config^.device_type) = Ord(ADeviceType)) and
+       (Config^.pix_fmt <> AV_PIX_FMT_NONE) and
        ((Config^.methods and AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) <> 0) then
     begin
-      FHardwarePixelFormat := Config^.pix_fmt;
+      APixelFormat := Config^.pix_fmt;
       Exit(True);
     end;
 

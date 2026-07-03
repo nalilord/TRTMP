@@ -226,6 +226,8 @@ begin
       Result := 1;
     AV_PIX_FMT_YUV420P:
       Result := 3;
+    AV_PIX_FMT_NV12:
+      Result := 2;
   else
     Result := 1;
   end;
@@ -244,6 +246,15 @@ begin
         0:
           Result := FHeight;
         1, 2:
+          Result := (FHeight + 1) div 2;
+      else
+        Result := 0;
+      end;
+    AV_PIX_FMT_NV12:
+      case AIndex of
+        0:
+          Result := FHeight;
+        1:
           Result := (FHeight + 1) div 2;
       else
         Result := 0;
@@ -280,6 +291,13 @@ begin
           Result := FWidth;
         1, 2:
           Result := (FWidth + 1) div 2;
+      else
+        Result := 0;
+      end;
+    AV_PIX_FMT_NV12:
+      case AIndex of
+        0, 1:
+          Result := FWidth;
       else
         Result := 0;
       end;
