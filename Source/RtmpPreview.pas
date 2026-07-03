@@ -11,6 +11,7 @@ uses
   {$IFDEF UNIX}
   FfmpegLinuxHwAccelProbe,
   {$ENDIF}
+  Classes,
   Contnrs,
   SyncObjs,
   SysUtils,
@@ -174,10 +175,13 @@ type
     FSelectedRemotePort: Word;
     FSelectedStreamName: string;
     FServer: TRtmpServer;
+    FSessionVideoConfigs: TStringList;
     FStartedAt: UInt64;
     FStats: TRtmpPreviewStats;
     FWaitingForVideoKeyframe: Boolean;
     procedure ApplyPendingReset;
+    procedure CacheSessionVideoConfigLocked(const ASessionKey: string;
+      APacket: TRtmpPacket);
     procedure ClearActiveSelectionLocked;
     procedure ClearPacketQueueLocked;
     procedure DrainDecodeFrames;
@@ -196,8 +200,10 @@ type
       const ACategory, AMessage: string);
     function MatchesSelection(const AStreamName: string): Boolean;
     function PublisherLabel(const Session: TRtmpServerSession): string;
+    procedure RemoveSessionVideoConfigLocked(const ASessionKey: string);
     procedure ResetSessionStatsLocked;
     procedure ResetDecoderState;
+    procedure RestoreSessionVideoConfigLocked(const ASessionKey: string);
     function SessionKey(const Session: TRtmpServerSession): string;
     function SessionStreamName(const Session: TRtmpServerSession): string;
     procedure TrimPacketQueueLocked;
@@ -293,6 +299,8 @@ begin
   FLatestVideoConfig := nil;
   FLock := TCriticalSection.Create;
   FPackets := TObjectList.Create(True);
+  FSessionVideoConfigs := TStringList.Create;
+  FSessionVideoConfigs.OwnsObjects := True;
   FResetPending := False;
   FSelectedStreamName := '';
   FSelectedPublisher := '';
@@ -328,6 +336,7 @@ destructor TRtmpPreview.Destroy;
 begin
   Stop;
   FreeAndNil(FLatestVideoConfig);
+  FSessionVideoConfigs.Free;
   FPackets.Free;
   FLock.Free;
   FConverter.Free;
@@ -335,6 +344,27 @@ begin
   FDecoder.Free;
   FServer.Free;
   inherited Destroy;
+end;
+
+procedure TRtmpPreview.CacheSessionVideoConfigLocked(const ASessionKey: string;
+  APacket: TRtmpPacket);
+var
+  Clone: TRtmpPacket;
+  Index: Integer;
+begin
+  if (ASessionKey = '') or (APacket = nil) or
+    (not APacket.HasFlag(pfIsCodecConfig)) then
+    Exit;
+
+  Clone := APacket.CloneShallow;
+  Index := FSessionVideoConfigs.IndexOf(ASessionKey);
+  if Index >= 0 then
+  begin
+    FSessionVideoConfigs.Objects[Index].Free;
+    FSessionVideoConfigs.Objects[Index] := Clone;
+  end
+  else
+    FSessionVideoConfigs.AddObject(ASessionKey, Clone);
 end;
 
 procedure TRtmpPreview.ResetSessionStatsLocked;
@@ -382,6 +412,36 @@ begin
   FStats.QueuePackets := 0;
   FStats.QueueBytes := 0;
   FStats.QueueDurationMS := 0;
+end;
+
+procedure TRtmpPreview.RemoveSessionVideoConfigLocked(const ASessionKey: string);
+var
+  Index: Integer;
+begin
+  if ASessionKey = '' then
+    Exit;
+
+  Index := FSessionVideoConfigs.IndexOf(ASessionKey);
+  if Index >= 0 then
+    FSessionVideoConfigs.Delete(Index);
+end;
+
+procedure TRtmpPreview.RestoreSessionVideoConfigLocked(const ASessionKey: string);
+var
+  Cached: TRtmpPacket;
+  Index: Integer;
+begin
+  FreeAndNil(FLatestVideoConfig);
+  if ASessionKey = '' then
+    Exit;
+
+  Index := FSessionVideoConfigs.IndexOf(ASessionKey);
+  if Index < 0 then
+    Exit;
+
+  Cached := TRtmpPacket(FSessionVideoConfigs.Objects[Index]);
+  if Cached <> nil then
+    FLatestVideoConfig := Cached.CloneShallow;
 end;
 
 procedure TRtmpPreview.ClearSelection;
@@ -857,6 +917,7 @@ begin
 
   FLock.Acquire;
   try
+    RemoveSessionVideoConfigLocked(SessionKey(Session));
     if SessionKey(Session) = FActiveSessionKey then
     begin
       NotifyStop := True;
@@ -876,10 +937,58 @@ end;
 
 procedure TRtmpPreview.HandleData(Sender: TObject; Session: TRtmpServerSession;
   Packet: TRtmpPacket);
+var
+  NotifyStart: Boolean;
+  SessionId: string;
+  StreamName: string;
 begin
   if (Packet = nil) or (not Packet.HasFlag(pfIsVideo)) then
     Exit;
-  if SessionKey(Session) <> FActiveSessionKey then
+
+  SessionId := SessionKey(Session);
+  if Packet.HasFlag(pfIsCodecConfig) then
+  begin
+    FLock.Acquire;
+    try
+      CacheSessionVideoConfigLocked(SessionId, Packet);
+    finally
+      FLock.Release;
+    end;
+  end;
+
+  if SessionId <> FActiveSessionKey then
+  begin
+    NotifyStart := False;
+    StreamName := SessionStreamName(Session);
+    if not MatchesSelection(StreamName) then
+      Exit;
+
+    FLock.Acquire;
+    try
+      if (FActiveSessionKey = '') and MatchesSelection(StreamName) then
+      begin
+        FActiveSessionKey := SessionId;
+        FSelectedStreamName := StreamName;
+        FSelectedRemoteAddress := Session.RemoteAddress;
+        FSelectedRemotePort := Session.RemotePort;
+        FSelectedPublisher := PublisherLabel(Session);
+        ResetSessionStatsLocked;
+        FResetPending := True;
+        NotifyStart := True;
+      end;
+    finally
+      FLock.Release;
+    end;
+
+    if NotifyStart and Assigned(FOnStreamStarted) then
+      FOnStreamStarted(Self, StreamName, Session.RemoteAddress,
+        Session.RemotePort);
+
+    if SessionId <> FActiveSessionKey then
+      Exit;
+  end;
+
+  if SessionId <> FActiveSessionKey then
     Exit;
   EnqueuePacket(Packet);
 end;
@@ -973,6 +1082,7 @@ begin
 
   FLock.Acquire;
   try
+    RemoveSessionVideoConfigLocked(StoppedKey);
     if StoppedKey = FActiveSessionKey then
     begin
       NotifyStop := True;
@@ -1025,12 +1135,12 @@ begin
   FLock.Acquire;
   try
     ClearPacketQueueLocked;
-    FreeAndNil(FLatestVideoConfig);
+    RestoreSessionVideoConfigLocked(FActiveSessionKey);
     FCurrentPacketArrivalTick := 0;
     FCurrentPacketQueueBytes := 0;
     FCurrentPacketQueueDepth := 0;
     FCurrentPacketSequenceNo := 0;
-    FWaitingForVideoKeyframe := False;
+    FWaitingForVideoKeyframe := FActiveSessionKey <> '';
     if Assigned(FDrainFrame) then
       TRtmpFFmpegApi.UnrefFrame(FDrainFrame);
     FLastReceiveDurationMS := 0;
@@ -1119,6 +1229,7 @@ begin
     ClearActiveSelectionLocked;
     ClearPacketQueueLocked;
     FreeAndNil(FLatestVideoConfig);
+    FSessionVideoConfigs.Clear;
   finally
     FLock.Release;
   end;
@@ -1138,6 +1249,7 @@ begin
   FLock.Acquire;
   try
     ClearActiveSelectionLocked;
+    FSessionVideoConfigs.Clear;
     FResetPending := False;
   finally
     FLock.Release;
