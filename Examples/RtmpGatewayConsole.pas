@@ -173,7 +173,7 @@ begin
     ProgramBufferStats := FApp.FProgramBuffer.GetStats;
     SwitcherStats := FApp.FSourceSwitcher.Switcher.GetStats;
     WriteLn(Format(
-      '[STATS] active=%d publishes=%d bytes=%d packets=%d bitrate=%.0f avg=%.0f idleMS=%d lagMS=%d maxLagMS=%d warns=%d errors=%d protoErr=%d transportErr=%d sessionErr=%d bufferPackets=%d bufferBytes=%d bufferWindowMS=%d evicted=%d retained=%d',
+      '[STATS] active=%d publishes=%d bytes=%d packets=%d bitrate=%.0f avg=%.0f idleMS=%d lagMS=%d maxLagMS=%d warns=%d errors=%d protoErr=%d transportErr=%d sessionErr=%d bufferPackets=%d bufferBytes=%d bufferWindowMS=%d evicted=%d evictPkt=%d evictByte=%d evictAge=%d retained=%d retainedBytes=%d',
       [ServerStats.ActiveSessions, ServerStats.ActivePublishes,
        ServerStats.BytesReceived, ServerStats.PacketsReceived,
        ServerStats.CurrentBitrate, ServerStats.AverageBitrate,
@@ -182,7 +182,9 @@ begin
        ServerStats.ProtocolErrors, ServerStats.TransportErrors,
        ServerStats.SessionErrors, ServerStats.Buffer.PacketCount,
        ServerStats.Buffer.ByteCount, ServerStats.Buffer.WindowDurationMS,
-       ServerStats.Buffer.EvictedPackets, ServerStats.Buffer.RetainedPackets]));
+       ServerStats.Buffer.EvictedPackets, ServerStats.Buffer.EvictedByPacketLimit,
+       ServerStats.Buffer.EvictedByByteLimit, ServerStats.Buffer.EvictedByAgeLimit,
+       ServerStats.Buffer.RetainedPackets, ServerStats.Buffer.RetainedBytes]));
     WriteLn(Format(
       '[PROGRAM] activeSource=%s switches=%d failovers=%d packets=%d bytes=%d starts=%d stops=%d bufferPackets=%d bufferBytes=%d bufferWindowMS=%d',
       [SwitcherStats.ActiveSourceID, SwitcherStats.SwitchCount,
@@ -506,6 +508,10 @@ begin
       FConfig.Server.MaxSessions);
     FConfig.Server.MaxChunkSize := Ini.ReadInteger('server', 'max_chunk_size',
       FConfig.Server.MaxChunkSize);
+    FConfig.Server.MaxMessageSize := Ini.ReadInteger('server', 'max_message_size',
+      FConfig.Server.MaxMessageSize);
+    FConfig.Server.MaxChunkStreams := Ini.ReadInteger('server', 'max_chunk_streams',
+      FConfig.Server.MaxChunkStreams);
     FConfig.Server.ReadTimeoutMS := Ini.ReadInteger('server', 'read_timeout_ms',
       FConfig.Server.ReadTimeoutMS);
     FConfig.Server.WriteTimeoutMS := Ini.ReadInteger('server', 'write_timeout_ms',

@@ -23,6 +23,7 @@ type
   TSmallBudgetSmokeApp = class
   private
     FClient: TRtmpClient;
+    FBufferWarningSeen: Boolean;
     FPacketsReceived: Integer;
     FPublishStarted: Boolean;
     FSequenceNo: UInt64;
@@ -31,6 +32,8 @@ type
     procedure AssertTrue(const AMessage: string; AValue: Boolean);
     procedure HandleData(Sender: TObject; Session: TRtmpServerSession;
       Packet: TRtmpPacket);
+    procedure HandleLog(Sender: TObject; ALevel: TRtmpLogLevel;
+      const ACategory, AMessage: string);
     procedure HandlePublishStarted(Sender: TObject; Session: TRtmpServerSession);
     procedure PushLivePackets;
     procedure SeedSourceBuffer;
@@ -59,6 +62,7 @@ begin
   FSourceBuffer := TRtmpCircularBuffer.Create(256, 2 * 1024 * 1024);
   FServer := TRtmpServer.Create;
   FClient := TRtmpClient.Create;
+  FBufferWarningSeen := False;
   FPacketsReceived := 0;
   FPublishStarted := False;
   FSequenceNo := 0;
@@ -70,6 +74,7 @@ begin
   Config.BufferMaxBytes := 2048;
   Config.BufferMaxDurationMS := 120;
   FServer.Config := Config;
+  FServer.LogSink.OnLog := HandleLog;
   FServer.OnData := HandleData;
   FServer.OnPublishStarted := HandlePublishStarted;
 
@@ -98,6 +103,14 @@ procedure TSmallBudgetSmokeApp.HandleData(Sender: TObject; Session: TRtmpServerS
   Packet: TRtmpPacket);
 begin
   Inc(FPacketsReceived);
+end;
+
+procedure TSmallBudgetSmokeApp.HandleLog(Sender: TObject; ALevel: TRtmpLogLevel;
+  const ACategory, AMessage: string);
+begin
+  if (ALevel = llWarning) and (ACategory = 'buffer') and
+    (Pos('Buffer pressure evicted=', AMessage) > 0) then
+    FBufferWarningSeen := True;
 end;
 
 procedure TSmallBudgetSmokeApp.HandlePublishStarted(Sender: TObject;
@@ -201,6 +214,10 @@ begin
       [FPacketsReceived, Stats.Buffer.EvictedPackets, Stats.Buffer.PacketCount,
        Stats.Buffer.WindowDurationMS, Stats.Errors]);
   AssertTrue('small-budget smoke: expected buffer evictions', Stats.Buffer.EvictedPackets > 0);
+  AssertTrue('small-budget smoke: expected live buffer-pressure warning', FBufferWarningSeen);
+  AssertTrue('small-budget smoke: expected buffer warning category',
+    Stats.LastWarningCategory = 'buffer');
+  AssertTrue('small-budget smoke: expected warning counter', Stats.Warnings > 0);
   AssertTrue('small-budget smoke: packet budget exceeded',
     Stats.Buffer.PacketCount <= Stats.Buffer.MaxPackets);
   AssertTrue('small-budget smoke: byte budget exceeded',

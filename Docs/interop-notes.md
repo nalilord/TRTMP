@@ -19,6 +19,14 @@
 - restream publish works
 - downstream playback was confirmed
 
+### Hardened ingest path
+
+- server smokes cover invalid command ordering, teardown commands, malformed
+  chunk sequences, extended timestamps, oversized chunk-size changes, oversized
+  declared message sizes, and excessive chunk-stream state creation
+- constrained-buffer smokes verify that live eviction pressure is surfaced in
+  warnings and stats instead of remaining silent
+
 ### Win64 preview path
 
 - live preview works with real OBS ingest
@@ -63,7 +71,11 @@ Current server stats expose:
 - current media timeline lag
 - maximum observed timeline lag
 
-These are ingest diagnostics, not end-to-end player latency claims.
+Timeline lag is calculated as wall-clock arrival elapsed minus media timestamp
+elapsed since the first packet in the current publish. Positive values mean
+packets are arriving slower than their media timeline; negative values mean the
+media timeline is advancing faster than wall-clock arrival time. These are ingest
+diagnostics, not end-to-end player latency claims.
 
 ## Known Limits
 
@@ -76,6 +88,9 @@ Real-world coverage is still narrower than the protocol surface:
 - nginx-rtmp target
 
 More targets still need explicit validation before claiming broad interop.
+
+The latest protocol hardening has automated coverage, but OBS/Windows and
+additional target testing should be repeated before a release claim.
 
 ### Twitch / VOD-track behavior
 

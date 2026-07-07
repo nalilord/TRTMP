@@ -57,6 +57,8 @@ type
     FPlaySequenceNo: UInt64;
     FMinLogLevel: TRtmpLogLevel;
     FMaxInChunkSize: Integer;
+    FMaxInMessageSize: Integer;
+    FMaxInChunkStreams: Integer;
     FProtocolDefaultsSent: Boolean;
     FReadTimeoutMS: Integer;
     FWriteTimeoutMS: Integer;
@@ -106,6 +108,8 @@ type
     procedure SendUserControl(AEventType: Word; AValue1, AValue2: UInt32); overload;
     procedure SendUserControlStreamBegin(AStreamID: UInt32);
     procedure SendWindowAckSize(AWindowSize: UInt32);
+    procedure SetMaxInChunkStreams(AValue: Integer);
+    procedure SetMaxInMessageSize(AValue: Integer);
   public
     constructor Create(const AConnection: IRtmpConnection); overload;
     constructor Create(const ARemoteAddress: string; ARemotePort: Word); overload;
@@ -133,6 +137,8 @@ type
     property AckWindowSize: UInt32 read FAckWindowSize write FAckWindowSize;
     property MessageStreamID: UInt32 read FMessageStreamID write FMessageStreamID;
     property MaxInChunkSize: Integer read FMaxInChunkSize write FMaxInChunkSize;
+    property MaxInChunkStreams: Integer read FMaxInChunkStreams write SetMaxInChunkStreams;
+    property MaxInMessageSize: Integer read FMaxInMessageSize write SetMaxInMessageSize;
     property MinLogLevel: TRtmpLogLevel read FMinLogLevel write FMinLogLevel;
     property ReadTimeoutMS: Integer read FReadTimeoutMS write FReadTimeoutMS;
     property State: TRtmpSessionState read FState write FState;
@@ -378,12 +384,16 @@ begin
   FPlaySequenceNo := 0;
   FMinLogLevel := llInfo;
   FMaxInChunkSize := 131072;
+  FMaxInMessageSize := 8 * 1024 * 1024;
+  FMaxInChunkStreams := 64;
   FProtocolDefaultsSent := False;
   FReadTimeoutMS := 10000;
   FWriteTimeoutMS := 10000;
   FRawBytesReceived := 0;
   FNextAckAt := FAckWindowSize;
   FReassembler := TRtmpChunkReassembler.Create(FInChunkSize);
+  FReassembler.MaxMessageSize := FMaxInMessageSize;
+  FReassembler.MaxChunkStreams := FMaxInChunkStreams;
   ResetStats;
 end;
 
@@ -1045,6 +1055,26 @@ begin
   if Length(ABytes) = 0 then
     Exit;
   SendBuffer(@ABytes[0], Length(ABytes));
+end;
+
+procedure TRtmpServerSession.SetMaxInChunkStreams(AValue: Integer);
+begin
+  if AValue < 0 then
+    raise ERtmpProtocolError.CreateFmt('Invalid maximum inbound chunk stream count %d', [AValue]);
+
+  FMaxInChunkStreams := AValue;
+  if FReassembler <> nil then
+    FReassembler.MaxChunkStreams := AValue;
+end;
+
+procedure TRtmpServerSession.SetMaxInMessageSize(AValue: Integer);
+begin
+  if AValue < 0 then
+    raise ERtmpProtocolError.CreateFmt('Invalid maximum inbound message size %d', [AValue]);
+
+  FMaxInMessageSize := AValue;
+  if FReassembler <> nil then
+    FReassembler.MaxMessageSize := AValue;
 end;
 
 procedure TRtmpServerSession.SendBuffer(ABuffer: Pointer; ACount: Integer);

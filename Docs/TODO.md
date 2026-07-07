@@ -43,6 +43,8 @@ Reason:
 - [x] Wire server packet dispatch into buffer and stats.
 - [x] Enforce server-side session admission via `MaxSessions`.
 - [x] Enforce inbound chunk-size caps via `MaxChunkSize`.
+- [x] Enforce inbound message-size caps via `MaxMessageSize`.
+- [x] Enforce inbound chunk-stream state caps via `MaxChunkStreams`.
 - [x] Wire analyzer snapshots into server stats when enabled.
 - [x] Provide runnable ingest console harness.
 
@@ -73,18 +75,22 @@ Reason:
 - [x] Add publish-reject smoke test.
 - [x] Add buffer eviction/bootstrap smoke test.
 - [x] Add chunk reassembler smoke for invalid header sequences, truncated chunks, and extended timestamps.
-- [x] Add server hardening smoke for max-session admission and oversized chunk-size rejection.
+- [x] Add server hardening smoke for max-session admission, oversized chunk-size
+  rejection, oversized message rejection, and chunk-stream state caps.
 - [x] Add server command-flow smoke for invalid publish ordering and teardown commands.
+- [x] Add small-buffer-budget smoke for live eviction warnings and stability.
+- [x] Add deterministic server latency-stat smoke coverage.
+- [x] Add API ergonomics smoke for config helpers and config constructors.
 - [x] Verify ingest from local `ffmpeg 8.1` publish.
 - [x] Live-test OBS ingest locally.
 - [x] Live-test restream to nginx RTMP and confirm playback via VLC.
 
 ## Current Priority
-- [ ] Server: harden ingest-side protocol handling for malformed or hostile input.
-- [ ] Server: reduce latency risks and clarify low-latency runtime behavior.
-- [ ] Server: expand automated coverage around server session and reassembler edge cases.
-- [ ] Client: improve interop coverage beyond the OBS -> nginx happy path.
-- [ ] Stats / Logging: make production diagnostics clearer under live load.
+- [ ] Client / Interop: re-check reconnect and publish behavior against real-world targets after server hardening.
+- [ ] Windows / OBS: re-test runtime ingest and preview on Windows after the latest hardening changes.
+- [ ] Interop: test relay into additional RTMP targets beyond nginx-rtmp.
+- [ ] Release prep: settle final repository presentation and third-party packaging.
+- [ ] Twitch / VOD-track: create capture-backed fixtures before implementing compatibility claims.
 
 ## Next Tasks
 
@@ -98,6 +104,7 @@ Reason:
 - [x] Review buffering strategy specifically for live-preview latency, not just relay safety.
 - [x] Define explicit server-side behavior when buffer pressure grows.
 - [x] Separate "buffer eviction" from "intentional live drop policy" in stats and logging.
+- [x] Emit live buffer-pressure warnings when ingest buffering evicts packets.
 - [x] Add tests for sustained ingest under small buffer budgets.
 
 ### 2. Client
@@ -111,6 +118,7 @@ Reason:
 - [x] Improve error categorization in ingest logs and stats.
 - [x] Make session/server stats more actionable for live operations.
 - [x] Add clearer latency-oriented counters where possible.
+- [x] Add deterministic coverage for timeline lag semantics.
 - [x] Review log noise vs signal for production runtime use.
 
 ### 4. Packet / Processor
@@ -136,15 +144,18 @@ Reason:
 ### Windows / Delphi Productization
 - [x] Build a cleaner config-driven runner for Delphi/Windows use.
 - [x] Add a Delphi build helper and validate Win64 compile on the main runners.
-- [ ] Review unit/API surface for Delphi ergonomics.
+- [x] Review unit/API surface for Delphi ergonomics.
 - [x] Test compile and runtime behavior under actual Delphi, not only FPC.
-- [ ] Decide how custom transports such as Indy should be documented and plugged in.
+- [x] Decide how custom transports such as Indy should be documented and plugged in.
 
 ### Documentation
 - [x] Add a short README with build/run/test commands.
 - [x] Add a "current status" overview for new contributors.
 - [x] Document example workflows: ingest-only and ingest+restream.
 - [x] Document timestamp-mode behavior with practical guidance.
+- [x] Document Delphi-friendly config and transport extension style.
+- [x] Add top-level BSD 2-Clause license.
+- [x] Refresh project status docs after protocol hardening and API ergonomics work.
 
 ## Later
 

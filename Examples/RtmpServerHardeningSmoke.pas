@@ -35,9 +35,15 @@ type
       out ABytes: TBytes): Boolean;
     procedure RestartServer(const AConfig: TRtmpServerConfig);
     procedure SendRawBytes(const AConnection: IRtmpConnection; const ABytes: TBytes);
+    procedure SendAckOnChunkStream(const AConnection: IRtmpConnection;
+      AChunkStreamID: UInt32);
+    procedure SendDeclaredDataMessage(const AConnection: IRtmpConnection;
+      ADeclaredLength, APayloadBytes: Integer);
     procedure SendSetChunkSize(const AConnection: IRtmpConnection; AChunkSize: UInt32);
     procedure StopServer;
     procedure TestMaxChunkSize;
+    procedure TestMaxChunkStreams;
+    procedure TestMaxMessageSize;
     procedure TestMaxSessions;
     function WaitForActiveSessions(AExpected: Integer; ATimeoutMS: Integer): Boolean;
     function WaitForProtocolErrors(AMinimum: UInt64; ATimeoutMS: Integer): Boolean;
@@ -123,7 +129,59 @@ procedure TServerHardeningSmoke.Run;
 begin
   TestMaxSessions;
   TestMaxChunkSize;
+  TestMaxMessageSize;
+  TestMaxChunkStreams;
   WriteLn('Server hardening smoke passed.');
+end;
+
+procedure TServerHardeningSmoke.SendAckOnChunkStream(
+  const AConnection: IRtmpConnection; AChunkStreamID: UInt32);
+var
+  Header: TRtmpChunkMessageHeader;
+  Writer: TRtmpByteWriter;
+begin
+  Header := Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat := hfType0;
+  Header.Timestamp := 0;
+  Header.MessageLength := 4;
+  Header.MessageTypeID := RtmpMessageTypeID(mtAck);
+  Header.MessageStreamID := 0;
+
+  Writer := TRtmpByteWriter.Create;
+  try
+    WriteChunkBasicHeader(Writer, hfType0, AChunkStreamID);
+    WriteChunkMessageHeader(Writer, Header);
+    Writer.WriteUInt32BE(AChunkStreamID);
+    SendRawBytes(AConnection, Writer.ToBytes);
+  finally
+    Writer.Free;
+  end;
+end;
+
+procedure TServerHardeningSmoke.SendDeclaredDataMessage(
+  const AConnection: IRtmpConnection; ADeclaredLength, APayloadBytes: Integer);
+var
+  Header: TRtmpChunkMessageHeader;
+  I: Integer;
+  Writer: TRtmpByteWriter;
+begin
+  Header := Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat := hfType0;
+  Header.Timestamp := 0;
+  Header.MessageLength := UInt32(ADeclaredLength);
+  Header.MessageTypeID := RtmpMessageTypeID(mtDataAMF0);
+  Header.MessageStreamID := 1;
+
+  Writer := TRtmpByteWriter.Create;
+  try
+    WriteChunkBasicHeader(Writer, hfType0, 5);
+    WriteChunkMessageHeader(Writer, Header);
+    for I := 1 to APayloadBytes do
+      Writer.WriteUInt8(Byte(I mod 256));
+    SendRawBytes(AConnection, Writer.ToBytes);
+  finally
+    Writer.Free;
+  end;
 end;
 
 procedure TServerHardeningSmoke.SendRawBytes(const AConnection: IRtmpConnection;
@@ -210,6 +268,81 @@ begin
     AssertTrue('expected last error category to be protocol',
       FServer.GetStats.LastErrorCategory = 'protocol');
     AssertTrue('expected active sessions to drain after chunk-size rejection',
+      WaitForActiveSessions(0, 2000));
+  finally
+    Connection.Close;
+  end;
+
+  StopServer;
+end;
+
+procedure TServerHardeningSmoke.TestMaxChunkStreams;
+var
+  Config: TRtmpServerConfig;
+  Connection: IRtmpConnection;
+  Endpoint: TRtmpSocketEndpoint;
+begin
+  Config := DefaultRtmpServerConfig;
+  Config.BindAddress := '127.0.0.1';
+  Config.Port := 1962;
+  Config.MaxSessions := 2;
+  Config.MaxChunkStreams := 2;
+  RestartServer(Config);
+
+  Endpoint := TRtmpSocketEndpoint.Create('127.0.0.1', Config.Port);
+  Connection := FTransportFactory.CreateClientConnection(Endpoint, 3000);
+  try
+    WriteHandshake(Connection);
+    SendAckOnChunkStream(Connection, 5);
+    SendAckOnChunkStream(Connection, 6);
+    SendAckOnChunkStream(Connection, 7);
+
+    AssertTrue('expected chunk-stream protocol error',
+      WaitForServerErrors(1, 2000));
+    AssertTrue('expected oversized chunk-stream log entry',
+      LogContains('RTMP chunk stream count 3 exceeds configured maximum 2'));
+    AssertTrue('expected protocol error counter to increment',
+      WaitForProtocolErrors(1, 2000));
+    AssertTrue('expected last error category to be protocol',
+      FServer.GetStats.LastErrorCategory = 'protocol');
+    AssertTrue('expected active sessions to drain after chunk-stream rejection',
+      WaitForActiveSessions(0, 2000));
+  finally
+    Connection.Close;
+  end;
+
+  StopServer;
+end;
+
+procedure TServerHardeningSmoke.TestMaxMessageSize;
+var
+  Config: TRtmpServerConfig;
+  Connection: IRtmpConnection;
+  Endpoint: TRtmpSocketEndpoint;
+begin
+  Config := DefaultRtmpServerConfig;
+  Config.BindAddress := '127.0.0.1';
+  Config.Port := 1961;
+  Config.MaxSessions := 2;
+  Config.MaxChunkSize := 1024;
+  Config.MaxMessageSize := 1024;
+  RestartServer(Config);
+
+  Endpoint := TRtmpSocketEndpoint.Create('127.0.0.1', Config.Port);
+  Connection := FTransportFactory.CreateClientConnection(Endpoint, 3000);
+  try
+    WriteHandshake(Connection);
+    SendDeclaredDataMessage(Connection, 2048, 128);
+
+    AssertTrue('expected message-size protocol error',
+      WaitForServerErrors(1, 2000));
+    AssertTrue('expected oversized message-size log entry',
+      LogContains('RTMP message length 2048 exceeds configured maximum 1024'));
+    AssertTrue('expected protocol error counter to increment',
+      WaitForProtocolErrors(1, 2000));
+    AssertTrue('expected last error category to be protocol',
+      FServer.GetStats.LastErrorCategory = 'protocol');
+    AssertTrue('expected active sessions to drain after message-size rejection',
       WaitForActiveSessions(0, 2000));
   finally
     Connection.Close;

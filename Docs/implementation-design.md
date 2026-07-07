@@ -17,6 +17,7 @@ are allowed, but they are not part of the mandatory ingest/relay runtime path.
 ```text
 Docs/
   current-status.md
+  api-ergonomics.md
   implementation-design.md
   interop-notes.md
   production-readiness-checklist.md

@@ -34,10 +34,12 @@ type
     function GetRetainedBytesLocked: UInt64;
     function GetRetainedPacketCountLocked: Integer;
     function HasPacketWithSequenceNoLocked(ASequenceNo: UInt64): Boolean;
+    procedure PushLocked(APacket: TRtmpPacket);
     procedure ReplacePinnedPacket(var ATarget: TRtmpPacket; ASource: TRtmpPacket);
     procedure SetMaxBytes(AValue: UInt64);
     procedure SetMaxDurationMS(AValue: UInt32);
     procedure SetMaxPackets(AValue: Integer);
+    function SnapshotStatsLocked: TRtmpBufferStats;
     procedure TrimToBudget;
   public
     constructor Create(AMaxPackets: Integer; AMaxBytes: UInt64;
@@ -56,6 +58,8 @@ type
     function GetSnapshot: TRtmpPacketArray;
     function PeekLatest: TRtmpPacket;
     procedure Push(APacket: TRtmpPacket);
+    function PushAndGetStats(APacket: TRtmpPacket; out ABefore,
+      AAfter: TRtmpBufferStats): Boolean;
 
     property Count: Integer read GetCount;
     property MaxPackets: Integer read FMaxPackets write SetMaxPackets;
@@ -273,23 +277,7 @@ function TRtmpCircularBuffer.GetStats: TRtmpBufferStats;
 begin
   FLock.Acquire;
   try
-    Result := FStats;
-    Result.PacketCount := FItems.Count;
-    Result.ByteCount := FCurrentBytes;
-    Result.MaxPackets := FMaxPackets;
-    Result.MaxBytes := FMaxBytes;
-    Result.MaxDurationMS := FMaxDurationMS;
-    if FItems.Count > 1 then
-      Result.WindowDurationMS := TRtmpPacket(FItems[FItems.Count - 1]).Timestamp -
-        TRtmpPacket(FItems[0]).Timestamp
-    else
-      Result.WindowDurationMS := 0;
-    Result.HasMetadata := FLatestMetadata <> nil;
-    Result.HasAudioConfig := FLatestAudioConfig <> nil;
-    Result.HasVideoConfig := FLatestVideoConfig <> nil;
-    Result.HasKeyframe := FLatestKeyframe <> nil;
-    Result.RetainedPackets := GetRetainedPacketCountLocked;
-    Result.RetainedBytes := GetRetainedBytesLocked;
+    Result := SnapshotStatsLocked;
   finally
     FLock.Release;
   end;
@@ -423,23 +411,48 @@ begin
 
   FLock.Acquire;
   try
-    if APacket.HasFlag(pfIsMetadata) then
-      ReplacePinnedPacket(FLatestMetadata, APacket);
-    if APacket.HasFlag(pfIsAudio) and APacket.HasFlag(pfIsCodecConfig) then
-      ReplacePinnedPacket(FLatestAudioConfig, APacket);
-    if APacket.HasFlag(pfIsVideo) and APacket.HasFlag(pfIsCodecConfig) then
-      ReplacePinnedPacket(FLatestVideoConfig, APacket);
-    if APacket.HasFlag(pfIsKeyframe) and not APacket.HasFlag(pfIsCodecConfig) then
-      ReplacePinnedPacket(FLatestKeyframe, APacket);
-
-    FItems.Add(APacket);
-    Inc(FCurrentBytes, UInt64(APacket.PayloadSize));
-    Inc(FStats.TotalPacketsPushed);
-    Inc(FStats.TotalBytesPushed, UInt64(APacket.PayloadSize));
-    TrimToBudget;
+    PushLocked(APacket);
   finally
     FLock.Release;
   end;
+end;
+
+function TRtmpCircularBuffer.PushAndGetStats(APacket: TRtmpPacket; out ABefore,
+  AAfter: TRtmpBufferStats): Boolean;
+begin
+  ABefore := Default(TRtmpBufferStats);
+  AAfter := Default(TRtmpBufferStats);
+  Result := False;
+  if APacket = nil then
+    Exit;
+
+  FLock.Acquire;
+  try
+    ABefore := SnapshotStatsLocked;
+    PushLocked(APacket);
+    AAfter := SnapshotStatsLocked;
+    Result := True;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TRtmpCircularBuffer.PushLocked(APacket: TRtmpPacket);
+begin
+  if APacket.HasFlag(pfIsMetadata) then
+    ReplacePinnedPacket(FLatestMetadata, APacket);
+  if APacket.HasFlag(pfIsAudio) and APacket.HasFlag(pfIsCodecConfig) then
+    ReplacePinnedPacket(FLatestAudioConfig, APacket);
+  if APacket.HasFlag(pfIsVideo) and APacket.HasFlag(pfIsCodecConfig) then
+    ReplacePinnedPacket(FLatestVideoConfig, APacket);
+  if APacket.HasFlag(pfIsKeyframe) and not APacket.HasFlag(pfIsCodecConfig) then
+    ReplacePinnedPacket(FLatestKeyframe, APacket);
+
+  FItems.Add(APacket);
+  Inc(FCurrentBytes, UInt64(APacket.PayloadSize));
+  Inc(FStats.TotalPacketsPushed);
+  Inc(FStats.TotalBytesPushed, UInt64(APacket.PayloadSize));
+  TrimToBudget;
 end;
 
 procedure TRtmpCircularBuffer.ReplacePinnedPacket(var ATarget: TRtmpPacket;
@@ -484,6 +497,27 @@ begin
   finally
     FLock.Release;
   end;
+end;
+
+function TRtmpCircularBuffer.SnapshotStatsLocked: TRtmpBufferStats;
+begin
+  Result := FStats;
+  Result.PacketCount := FItems.Count;
+  Result.ByteCount := FCurrentBytes;
+  Result.MaxPackets := FMaxPackets;
+  Result.MaxBytes := FMaxBytes;
+  Result.MaxDurationMS := FMaxDurationMS;
+  if FItems.Count > 1 then
+    Result.WindowDurationMS := TRtmpPacket(FItems[FItems.Count - 1]).Timestamp -
+      TRtmpPacket(FItems[0]).Timestamp
+  else
+    Result.WindowDurationMS := 0;
+  Result.HasMetadata := FLatestMetadata <> nil;
+  Result.HasAudioConfig := FLatestAudioConfig <> nil;
+  Result.HasVideoConfig := FLatestVideoConfig <> nil;
+  Result.HasKeyframe := FLatestKeyframe <> nil;
+  Result.RetainedPackets := GetRetainedPacketCountLocked;
+  Result.RetainedBytes := GetRetainedBytesLocked;
 end;
 
 procedure TRtmpCircularBuffer.TrimToBudget;

@@ -45,6 +45,8 @@ type
     FInputBuffer: TBytes;
     FInputStart: Integer;
     FInChunkSize: Integer;
+    FMaxMessageSize: Integer;
+    FMaxChunkStreams: Integer;
     FStates: TObjectList;
     procedure AppendBuffer(const ABytes: TBytes);
     procedure CompactInputBuffer;
@@ -68,9 +70,13 @@ type
     function GetPendingPreview(AMaxBytes: Integer = 64): TBytes;
     function PendingBytes: Integer;
     procedure SetInChunkSize(AValue: Integer);
+    procedure SetMaxChunkStreams(AValue: Integer);
+    procedure SetMaxMessageSize(AValue: Integer);
     function TryReadMessage(out AMessage: TRtmpChunkMessage): Boolean;
 
     property InChunkSize: Integer read FInChunkSize write SetInChunkSize;
+    property MaxChunkStreams: Integer read FMaxChunkStreams write SetMaxChunkStreams;
+    property MaxMessageSize: Integer read FMaxMessageSize write SetMaxMessageSize;
   end;
 
 implementation
@@ -88,6 +94,8 @@ begin
   inherited Create;
   FStates := TObjectList.Create(True);
   FInputStart := 0;
+  FMaxMessageSize := 0;
+  FMaxChunkStreams := 0;
   SetInChunkSize(AInChunkSize);
 end;
 
@@ -225,6 +233,11 @@ begin
   Result := FindState(AChunkStreamID);
   if Result = nil then
   begin
+    if (FMaxChunkStreams > 0) and (FStates.Count >= FMaxChunkStreams) then
+      raise ERtmpProtocolError.CreateFmt(
+        'RTMP chunk stream count %d exceeds configured maximum %d',
+        [FStates.Count + 1, FMaxChunkStreams]);
+
     Result := TRtmpChunkStreamState.Create;
     Result.ChunkStreamID := AChunkStreamID;
     Result.ClearActive;
@@ -324,6 +337,20 @@ begin
   FInChunkSize := AValue;
 end;
 
+procedure TRtmpChunkReassembler.SetMaxChunkStreams(AValue: Integer);
+begin
+  if AValue < 0 then
+    raise ERtmpProtocolError.CreateFmt('Invalid maximum chunk stream count %d', [AValue]);
+  FMaxChunkStreams := AValue;
+end;
+
+procedure TRtmpChunkReassembler.SetMaxMessageSize(AValue: Integer);
+begin
+  if AValue < 0 then
+    raise ERtmpProtocolError.CreateFmt('Invalid maximum message size %d', [AValue]);
+  FMaxMessageSize := AValue;
+end;
+
 function TRtmpChunkReassembler.TryReadChunk(out AMessage: TRtmpChunkMessage): Boolean;
 var
   BasicHeader: TRtmpChunkBasicHeader;
@@ -414,6 +441,11 @@ begin
 
     if not State.Active then
     begin
+      if (FMaxMessageSize > 0) and
+        (ResolvedHeader.MessageLength > UInt32(FMaxMessageSize)) then
+        raise ERtmpProtocolError.CreateFmt('RTMP message length %d exceeds configured maximum %d',
+          [ResolvedHeader.MessageLength, FMaxMessageSize]);
+
       State.Active := True;
       State.ActiveHeader := ResolvedHeader;
       SetLength(State.ActivePayload, ResolvedHeader.MessageLength);

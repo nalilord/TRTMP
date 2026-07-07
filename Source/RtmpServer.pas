@@ -73,14 +73,17 @@ type
       const ACategory, AMessage: string);
     procedure HandleSessionPacket(Session: TRtmpServerSession; Packet: TRtmpPacket);
     procedure Log(ALevel: TRtmpLogLevel; const ACategory, AMessage: string);
+    procedure NoteBufferPressure(const ABefore, AAfter: TRtmpBufferStats);
     procedure NotifyClientConnected(Session: TRtmpServerSession);
     procedure NotifyClientDisconnected(Session: TRtmpServerSession);
     procedure ReleaseSessionSlot;
+    procedure Initialize(const AConfig: TRtmpServerConfig);
     function SessionSourceID(Session: TRtmpServerSession): string;
     procedure StartSessionThread(const AConnection: IRtmpConnection);
     function TryAcquireSessionSlot: Boolean;
   public
-    constructor Create;
+    constructor Create; overload;
+    constructor Create(const AConfig: TRtmpServerConfig); overload;
     destructor Destroy; override;
 
     procedure AttachBuffer(ABuffer: TRtmpCircularBuffer);
@@ -160,6 +163,8 @@ begin
   try
     Session.MinLogLevel := llDebug;
     Session.MaxInChunkSize := FServer.Config.MaxChunkSize;
+    Session.MaxInMessageSize := FServer.Config.MaxMessageSize;
+    Session.MaxInChunkStreams := FServer.Config.MaxChunkStreams;
     Session.ReadTimeoutMS := FServer.Config.ReadTimeoutMS;
     Session.WriteTimeoutMS := FServer.Config.WriteTimeoutMS;
     Session.AttachBuffer(FServer.PlaybackBuffer);
@@ -181,7 +186,18 @@ end;
 constructor TRtmpServer.Create;
 begin
   inherited Create;
-  FConfig := DefaultRtmpServerConfig;
+  Initialize(DefaultRtmpServerConfig);
+end;
+
+constructor TRtmpServer.Create(const AConfig: TRtmpServerConfig);
+begin
+  inherited Create;
+  Initialize(AConfig);
+end;
+
+procedure TRtmpServer.Initialize(const AConfig: TRtmpServerConfig);
+begin
+  FConfig := AConfig;
   FAnalyzer := TRtmpAnalyzer.Create;
   FBuffer := TRtmpCircularBuffer.Create(FConfig.BufferMaxPackets, FConfig.BufferMaxBytes,
     FConfig.BufferMaxDurationMS);
@@ -228,6 +244,8 @@ end;
 
 procedure TRtmpServer.DispatchPacket(ASession: TRtmpServerSession; APacket: TRtmpPacket);
 var
+  BufferStatsAfter: TRtmpBufferStats;
+  BufferStatsBefore: TRtmpBufferStats;
   SourceID: string;
 begin
   if (ASession = nil) or (APacket = nil) then
@@ -239,7 +257,12 @@ begin
     FAnalyzer.Feed(APacket);
 
   if FBuffer <> nil then
-    FBuffer.Push(APacket.CloneShallow);
+  begin
+    if FBuffer.PushAndGetStats(APacket.CloneShallow, BufferStatsBefore,
+      BufferStatsAfter) and
+      (BufferStatsAfter.EvictedPackets > BufferStatsBefore.EvictedPackets) then
+      NoteBufferPressure(BufferStatsBefore, BufferStatsAfter);
+  end;
 
   if Assigned(FOnData) then
     FOnData(Self, ASession, APacket);
@@ -328,6 +351,29 @@ begin
   if ALevel < FMinLogLevel then
     Exit;
   FLog.Log(Self, ALevel, ACategory, AMessage);
+end;
+
+procedure TRtmpServer.NoteBufferPressure(const ABefore, AAfter: TRtmpBufferStats);
+var
+  DeltaAge: UInt64;
+  DeltaBytes: UInt64;
+  DeltaEvicted: UInt64;
+  DeltaPacket: UInt64;
+  MessageText: string;
+begin
+  DeltaEvicted := AAfter.EvictedPackets - ABefore.EvictedPackets;
+  DeltaPacket := AAfter.EvictedByPacketLimit - ABefore.EvictedByPacketLimit;
+  DeltaBytes := AAfter.EvictedByByteLimit - ABefore.EvictedByByteLimit;
+  DeltaAge := AAfter.EvictedByAgeLimit - ABefore.EvictedByAgeLimit;
+
+  MessageText := Format(
+    'Buffer pressure evicted=%d packetLimit=%d byteLimit=%d ageLimit=%d packets=%d/%d bytes=%d/%d windowMS=%d/%d retained=%d retainedBytes=%d',
+    [DeltaEvicted, DeltaPacket, DeltaBytes, DeltaAge,
+     AAfter.PacketCount, AAfter.MaxPackets, AAfter.ByteCount, AAfter.MaxBytes,
+     AAfter.WindowDurationMS, AAfter.MaxDurationMS, AAfter.RetainedPackets,
+     AAfter.RetainedBytes]);
+  FStats.NoteLog(llWarning, 'buffer', MessageText);
+  Log(llWarning, 'buffer', MessageText);
 end;
 
 procedure TRtmpServer.NotifyClientConnected(Session: TRtmpServerSession);

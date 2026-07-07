@@ -55,6 +55,7 @@ build_fpc_examples=(
   Examples/RtmpIngestConsole.pas
   Examples/RtmpRestreamConsole.pas
   Examples/RtmpPlayConsole.pas
+  Examples/RtmpApiErgonomicsSmoke.pas
   Examples/RtmpBufferSmoke.pas
   Examples/RtmpChunkReassemblerSmoke.pas
   Examples/RtmpAnalyzerSmoke.pas
@@ -75,6 +76,7 @@ build_fpc_examples=(
 )
 
 runtime_local=(
+  ./Bin/linux/RtmpApiErgonomicsSmoke
   ./Bin/linux/RtmpBufferSmoke
   ./Bin/linux/RtmpChunkReassemblerSmoke
   ./Bin/linux/RtmpAnalyzerSmoke

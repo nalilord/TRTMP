@@ -47,9 +47,11 @@ type
     procedure NoteReconnect;
     procedure NoteSentPacket(const APacket: TRtmpPacket);
     procedure RecalculateBitrate;
+    procedure Initialize(const AConfig: TRtmpClientConfig);
     procedure ResetStats;
   public
-    constructor Create;
+    constructor Create; overload;
+    constructor Create(const AConfig: TRtmpClientConfig); overload;
     destructor Destroy; override;
 
     procedure AttachBuffer(ABuffer: TRtmpCircularBuffer);
@@ -1376,14 +1378,25 @@ end;
 constructor TRtmpClient.Create;
 begin
   inherited Create;
+  Initialize(DefaultRtmpClientConfig);
+end;
+
+constructor TRtmpClient.Create(const AConfig: TRtmpClientConfig);
+begin
+  inherited Create;
+  Initialize(AConfig);
+end;
+
+procedure TRtmpClient.Initialize(const AConfig: TRtmpClientConfig);
+begin
   FLock := TCriticalSection.Create;
-  FConfig := DefaultRtmpClientConfig;
+  FConfig := AConfig;
   FLog := TRtmpLogSink.Create;
   FState := csStopped;
   FTransactionID := 1.0;
   FTransportFactory := TRtmpNativeTransportFactory.Create;
   FRelayThread := nil;
-  FOutChunkSize := 4096;
+  FOutChunkSize := UInt32(FConfig.OutChunkSize);
   ResetStats;
 end;
 

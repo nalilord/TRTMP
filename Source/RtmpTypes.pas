@@ -91,6 +91,8 @@ type
     Port: Word;
     MaxSessions: Integer;
     MaxChunkSize: Integer;
+    MaxMessageSize: Integer;
+    MaxChunkStreams: Integer;
     ReadTimeoutMS: Integer;
     WriteTimeoutMS: Integer;
     BufferMaxPackets: Integer;
@@ -102,6 +104,9 @@ type
     function WithBind(const AAddress: string; APort: Word): TRtmpServerConfig;
     function WithBufferLimits(AMaxPackets: Integer; AMaxBytes: UInt64;
       AMaxDurationMS: UInt32 = 0): TRtmpServerConfig;
+    function WithProtocolLimits(AMaxChunkSize, AMaxMessageSize,
+      AMaxChunkStreams: Integer): TRtmpServerConfig;
+    function WithTimeouts(AReadTimeoutMS, AWriteTimeoutMS: Integer): TRtmpServerConfig;
   end;
 
   TRtmpClientConfig = record
@@ -114,6 +119,7 @@ type
     OutChunkSize: Integer;
     TimestampMode: TRtmpTimestampMode;
     class function CreateDefault: TRtmpClientConfig; static;
+    function WithTarget(const ATargetURL, AApp, AStreamKey: string): TRtmpClientConfig;
     function WithTargetUrl(const ATargetURL: string): TRtmpClientConfig;
     function WithConnectTimeout(AConnectTimeoutMS: Integer): TRtmpClientConfig;
     function WithReconnect(ADelayMS, AMaxDelayMS: Integer): TRtmpClientConfig;
@@ -241,9 +247,35 @@ begin
   Result.BufferMaxDurationMS := AMaxDurationMS;
 end;
 
+function TRtmpServerConfig.WithProtocolLimits(AMaxChunkSize, AMaxMessageSize,
+  AMaxChunkStreams: Integer): TRtmpServerConfig;
+begin
+  Result := Self;
+  Result.MaxChunkSize := AMaxChunkSize;
+  Result.MaxMessageSize := AMaxMessageSize;
+  Result.MaxChunkStreams := AMaxChunkStreams;
+end;
+
+function TRtmpServerConfig.WithTimeouts(AReadTimeoutMS,
+  AWriteTimeoutMS: Integer): TRtmpServerConfig;
+begin
+  Result := Self;
+  Result.ReadTimeoutMS := AReadTimeoutMS;
+  Result.WriteTimeoutMS := AWriteTimeoutMS;
+end;
+
 class function TRtmpClientConfig.CreateDefault: TRtmpClientConfig;
 begin
   Result := DefaultRtmpClientConfig;
+end;
+
+function TRtmpClientConfig.WithTarget(const ATargetURL, AApp,
+  AStreamKey: string): TRtmpClientConfig;
+begin
+  Result := Self;
+  Result.TargetURL := ATargetURL;
+  Result.App := AApp;
+  Result.StreamKey := AStreamKey;
 end;
 
 function TRtmpClientConfig.WithTargetUrl(
@@ -289,6 +321,8 @@ begin
   Result.Port := 1935;
   Result.MaxSessions := 8;
   Result.MaxChunkSize := 131072;
+  Result.MaxMessageSize := 8 * 1024 * 1024;
+  Result.MaxChunkStreams := 64;
   Result.ReadTimeoutMS := 10000;
   Result.WriteTimeoutMS := 10000;
   Result.BufferMaxPackets := 4096;

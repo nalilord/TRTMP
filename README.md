@@ -59,6 +59,10 @@ Implemented and verified:
 - RTMP restream client with reconnect/backoff
 - packet-level analyzer snapshots
 - bounded shared packet buffer with bootstrap retention
+- ingest hardening limits for sessions, chunk size, message size, and
+  chunk-stream state count
+- live buffer-pressure warnings and eviction counters
+- Delphi-friendly config constructors and fluent config helpers
 - configurable relay timestamp modes
 - optional FFmpeg-backed decode path
 - optional live preview path through PasSFML
@@ -226,15 +230,6 @@ The optional renderer path uses:
 - [Current Status](Docs/current-status.md)
 - [Implementation Design](Docs/implementation-design.md)
 - [Interop Notes](Docs/interop-notes.md)
+- [API Ergonomics Notes](Docs/api-ergonomics.md)
+- [Production-Readiness Checklist](Docs/production-readiness-checklist.md)
 - [TODO](Docs/TODO.md)
-
-## Publish Notes
-
-Before the first public commit:
-
-- add a top-level `LICENSE`
-- remove the empty placeholder `.git` directory if it still exists in the local tree
-- decide whether `ThirdParty/PasSFML` and `ThirdParty/TRadioPlayer` are vendored
-  source trees or real submodules; if they are vendored, remove their embedded
-  `.git` directories before the first top-level commit
-- rebuild only the artifacts you actually intend to ship
