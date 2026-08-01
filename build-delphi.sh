@@ -82,12 +82,24 @@ INCLUDE_PATH_WIN="${SEARCH_PATH_WIN}"
 UNIT_SCOPES="${DELPHI_UNIT_SCOPES:-System;Winapi;Data;Datasnap;Web;Xml;Soap;Vcl;Vcl.Imaging;Vcl.Samples}"
 
 if [[ "$USE_FFMPEG" -eq 1 ]]; then
+  if [[ ! -d "$ROOT/ThirdParty/TRadioPlayer/Headers" ]]; then
+    printf 'FFmpeg Pascal headers not found: %s\n' \
+      "$ROOT/ThirdParty/TRadioPlayer/Headers" >&2
+    printf 'Install the optional headers there or omit --with-ffmpeg.\n' >&2
+    exit 1
+  fi
   HEADER_DIR_WIN="$(wslpath -w "$ROOT/ThirdParty/TRadioPlayer/Headers")"
   SEARCH_PATH_WIN="${SEARCH_PATH_WIN};${HEADER_DIR_WIN}"
   INCLUDE_PATH_WIN="${INCLUDE_PATH_WIN};${HEADER_DIR_WIN}"
 fi
 
 if [[ "$USE_SFML" -eq 1 ]]; then
+  if [[ ! -d "$ROOT/ThirdParty/PasSFML/Source" ]]; then
+    printf 'PasSFML sources not found: %s\n' \
+      "$ROOT/ThirdParty/PasSFML/Source" >&2
+    printf 'Install the optional sources there or omit --with-sfml.\n' >&2
+    exit 1
+  fi
   SFML_DIR_WIN="$(wslpath -w "$ROOT/ThirdParty/PasSFML/Source")"
   SEARCH_PATH_WIN="${SEARCH_PATH_WIN};${SFML_DIR_WIN}"
   INCLUDE_PATH_WIN="${INCLUDE_PATH_WIN};${SFML_DIR_WIN}"

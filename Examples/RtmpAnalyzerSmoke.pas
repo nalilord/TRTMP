@@ -7,23 +7,23 @@ program RtmpAnalyzerSmoke;
 
 uses
   SysUtils,
-  RtmpAnalyzer,
-  RtmpPacket,
-  RtmpTypes;
+  TRTMP.RTMP.Media.Analyzer,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Types;
 
 function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 procedure AssertTrue(const AMessage: string; ACondition: Boolean);
 begin
-  if not ACondition then
+  if NOT ACondition then
     raise Exception.Create(AMessage);
 end;
 
@@ -39,7 +39,7 @@ function Packet(AMessageType: TRtmpMessageType; ATimestamp: UInt32;
   const APayloadBytes: array of Byte; AFlags: TRtmpPacketFlags;
   AArrivalTick: UInt64; ASequenceNo: UInt64): TRtmpPacket;
 begin
-  Result := TRtmpPacket.Create(AMessageType, ATimestamp, 0, 1, 6,
+  Result:=TRtmpPacket.Create(AMessageType, ATimestamp, 0, 1, 6,
     TRtmpSharedPayload.Create(Bytes(APayloadBytes)), AFlags, ASequenceNo,
     AArrivalTick);
 end;
@@ -50,7 +50,7 @@ procedure FeedPacket(AAnalyzer: TRtmpAnalyzer; AMessageType: TRtmpMessageType;
 var
   APacket: TRtmpPacket;
 begin
-  APacket := Packet(AMessageType, ATimestamp, APayloadBytes, AFlags,
+  APacket:=Packet(AMessageType, ATimestamp, APayloadBytes, AFlags,
     AArrivalTick, ASequenceNo);
   try
     AAnalyzer.Feed(APacket);
@@ -63,7 +63,7 @@ var
   Analyzer: TRtmpAnalyzer;
   Snapshot: TRtmpAnalysisSnapshot;
 begin
-  Analyzer := TRtmpAnalyzer.Create;
+  Analyzer:=TRtmpAnalyzer.Create;
   try
     FeedPacket(Analyzer, mtAudio, 0, [$AE, $00, $11, $88, $56, $E5, $00],
       [pfIsAudio, pfIsCodecConfig, pfIsSequenceHeader], 0, 0);
@@ -89,7 +89,7 @@ begin
     FeedPacket(Analyzer, mtVideo, 120, [$17, $01, $00, $00, $00, $20, $21, $22],
       [pfIsVideo, pfIsKeyframe], 1135, 9);
 
-    Snapshot := Analyzer.GetSnapshot;
+    Snapshot:=Analyzer.GetSnapshot;
 
     AssertTrue('analyzer smoke failed: expected AAC codec',
       Snapshot.AudioCodec = 'AAC');

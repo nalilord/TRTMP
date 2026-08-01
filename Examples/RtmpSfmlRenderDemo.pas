@@ -8,12 +8,12 @@ program RtmpSfmlRenderDemo;
 uses
   SysUtils,
   libavutil_pixfmt,
-  RtmpCompat,
-  RtmpDecoder,
-  RtmpDecoderFFmpeg,
-  RtmpFrameConvertFFmpeg,
-  RtmpPacket,
-  RtmpTypes,
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Decode,
+  TRTMP.RTMP.Decode.FFmpeg,
+  TRTMP.FFmpeg.FrameConvert,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Types,
   SfmlGraphics,
   SfmlSystem,
   SfmlWindow;
@@ -45,9 +45,9 @@ const
 function HexNibble(ACh: Char): Integer;
 begin
   case ACh of
-    '0'..'9': Result := Ord(ACh) - Ord('0');
-    'a'..'f': Result := 10 + Ord(ACh) - Ord('a');
-    'A'..'F': Result := 10 + Ord(ACh) - Ord('A');
+    '0'..'9': Result:=Ord(ACh) - Ord('0');
+    'a'..'f': Result:=10 + Ord(ACh) - Ord('a');
+    'A'..'F': Result:=10 + Ord(ACh) - Ord('A');
   else
     raise Exception.CreateFmt('Invalid hex character "%s"', [ACh]);
   end;
@@ -58,14 +58,14 @@ var
   Clean: string;
   I: Integer;
 begin
-  Result := nil;
-  Clean := StringReplace(AHex, ' ', '', [rfReplaceAll]);
-  if (Length(Clean) mod 2) <> 0 then
+  Result:=nil;
+  Clean:=StringReplace(AHex, ' ', '', [rfReplaceAll]);
+  if (Length(Clean) MOD 2) <> 0 then
     raise Exception.Create('Hex string must have an even number of digits');
 
-  SetLength(Result, Length(Clean) div 2);
-  for I := 0 to Length(Result) - 1 do
-    Result[I] := Byte((HexNibble(Clean[(I * 2) + 1]) shl 4) or
+  SetLength(Result, Length(Clean) DIV 2);
+  for I:=0 to Length(Result) - 1 do
+    Result[I]:=Byte((HexNibble(Clean[(I * 2) + 1]) SHL 4) OR
       HexNibble(Clean[(I * 2) + 2]));
 end;
 
@@ -73,13 +73,13 @@ function MakePacket(AMessageType: TRtmpMessageType; ATimestamp,
   ATimestampDelta: UInt32; const APayload: TBytes;
   const AFlags: TRtmpPacketFlags): TRtmpPacket;
 begin
-  Result := TRtmpPacket.Create(AMessageType, ATimestamp, ATimestampDelta, 1, 6,
+  Result:=TRtmpPacket.Create(AMessageType, ATimestamp, ATimestampDelta, 1, 6,
     TRtmpSharedPayload.Create(APayload), AFlags, 1);
 end;
 
 procedure AssertTrue(ACondition: Boolean; const AMessage: string);
 begin
-  if not ACondition then
+  if NOT ACondition then
     raise Exception.Create(AMessage);
 end;
 
@@ -93,32 +93,32 @@ var
   RawPacket: TRtmpPacket;
   ResultCode: Integer;
 begin
-  APixels := nil;
-  AWidth := 0;
-  AHeight := 0;
-  AInfo := Default(TRtmpDecodedFrameInfo);
+  APixels:=nil;
+  AWidth:=0;
+  AHeight:=0;
+  AInfo:=Default(TRtmpDecodedFrameInfo);
 
-  Decoder := TRtmpFFmpegPacketDecoder.Create;
-  Converter := TRtmpFFmpegFrameConverter.Create(AV_PIX_FMT_RGBA);
-  ConfigPacket := nil;
-  RawPacket := nil;
+  Decoder:=TRtmpFFmpegPacketDecoder.Create;
+  Converter:=TRtmpFFmpegFrameConverter.Create(AV_PIX_FMT_RGBA);
+  ConfigPacket:=nil;
+  RawPacket:=nil;
   try
-    Payload := HexToBytes('1700000000' + AVC_EXTRADATA_HEX);
-    ConfigPacket := MakePacket(mtVideo, 0, 0, Payload,
+    Payload:=HexToBytes('1700000000' + AVC_EXTRADATA_HEX);
+    ConfigPacket:=MakePacket(mtVideo, 0, 0, Payload,
       [pfIsVideo, pfIsCodecConfig, pfIsSequenceHeader, pfIsKeyframe]);
     AssertTrue(Decoder.OpenFromConfig(ConfigPacket), Decoder.LastErrorText);
 
-    Payload := HexToBytes('1701000000' + AVC_PACKET_HEX);
-    RawPacket := MakePacket(mtVideo, 21, 200, Payload, [pfIsVideo, pfIsKeyframe]);
-    ResultCode := Decoder.SubmitPacket(RawPacket);
+    Payload:=HexToBytes('1701000000' + AVC_PACKET_HEX);
+    RawPacket:=MakePacket(mtVideo, 21, 200, Payload, [pfIsVideo, pfIsKeyframe]);
+    ResultCode:=Decoder.SubmitPacket(RawPacket);
     AssertTrue(ResultCode >= 0, Decoder.LastErrorText);
 
-    ResultCode := Decoder.ReceiveFrame(AInfo);
+    ResultCode:=Decoder.ReceiveFrame(AInfo);
     AssertTrue(ResultCode >= 0, Decoder.LastErrorText);
     AssertTrue(Converter.ConvertVideoFrame(Decoder.Frame), Converter.LastErrorText);
 
-    AWidth := Converter.Width;
-    AHeight := Converter.Height;
+    AWidth:=Converter.Width;
+    AHeight:=Converter.Height;
     SetLength(APixels, Converter.BufferSize);
     Move(Converter.Buffer^, APixels[0], Converter.BufferSize);
 
@@ -150,36 +150,36 @@ var
   RawWidth: Integer;
 begin
   DecodeFixtureFrame(Pixels, RawWidth, RawHeight, FrameInfo);
-  AssertTrue((RawWidth > 0) and (RawHeight > 0), 'Decoded frame has invalid size');
+  AssertTrue((RawWidth > 0) AND (RawHeight > 0), 'Decoded frame has invalid size');
 
-  Scale := 16.0;
-  ScaledWidth := Cardinal(RawWidth * Trunc(Scale));
-  ScaledHeight := Cardinal(RawHeight * Trunc(Scale));
+  Scale:=16.0;
+  ScaledWidth:=Cardinal(RawWidth * Trunc(Scale));
+  ScaledHeight:=Cardinal(RawHeight * Trunc(Scale));
   if ScaledWidth < 320 then
-    ScaledWidth := 320;
+    ScaledWidth:=320;
   if ScaledHeight < 240 then
-    ScaledHeight := 240;
+    ScaledHeight:=240;
 
-  Mode := SfmlVideoMode(ScaledWidth, ScaledHeight, 32);
-  WindowTitle := AnsiString(Format(
+  Mode:=SfmlVideoMode(ScaledWidth, ScaledHeight, 32);
+  WindowTitle:=AnsiString(Format(
     'TRTMP SFML Demo - %dx%d %s ts=%dms',
     [FrameInfo.Width, FrameInfo.Height, RtmpDecoderCodecName(FrameInfo.Codec),
      FrameInfo.TimestampMS]));
 
-  Window := TSfmlRenderWindow.Create(Mode, WindowTitle, sfClose, sfWindowed);
+  Window:=TSfmlRenderWindow.Create(Mode, WindowTitle, sfClose, sfWindowed);
   try
     Window.SetVerticalSyncEnabled(True);
 
-    TextureSize := SfmlVector2u(Cardinal(RawWidth), Cardinal(RawHeight));
-    Texture := TSfmlTexture.Create(TextureSize);
+    TextureSize:=SfmlVector2u(Cardinal(RawWidth), Cardinal(RawHeight));
+    Texture:=TSfmlTexture.Create(TextureSize);
     try
       Texture.UpdateFromPixels(@Pixels[0], Cardinal(RawWidth), Cardinal(RawHeight), 0, 0);
 
-      Sprite := TSfmlSprite.Create(Texture);
+      Sprite:=TSfmlSprite.Create(Texture);
       try
-        Sprite.ScaleFactor := SfmlVector2f(Scale, Scale);
-        WindowSize := Window.Size;
-        Sprite.Position := SfmlVector2f(
+        Sprite.ScaleFactor:=SfmlVector2f(Scale, Scale);
+        WindowSize:=Window.Size;
+        Sprite.Position:=SfmlVector2f(
           (WindowSize.X - (RawWidth * Scale)) * 0.5,
           (WindowSize.Y - (RawHeight * Scale)) * 0.5);
 

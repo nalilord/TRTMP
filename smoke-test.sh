@@ -6,6 +6,7 @@ RUN_SOCKET_TESTS=1
 RUN_DELPHI=1
 RUN_FFMPEG=1
 RUN_SFML=1
+RUN_SOAK=0
 
 usage() {
   cat <<'EOF'
@@ -16,6 +17,7 @@ Options:
   --skip-delphi   Skip Delphi Win64 compile checks.
   --skip-ffmpeg   Skip optional FFmpeg decoder/preview checks.
   --skip-sfml     Skip optional SFML preview builds.
+  --with-soak     Run the configurable 60-second FFmpeg ingest soak.
 EOF
 }
 
@@ -34,6 +36,9 @@ while [[ $# -gt 0 ]]; do
     --skip-sfml)
       RUN_SFML=0
       ;;
+    --with-soak)
+      RUN_SOAK=1
+      ;;
     -h|--help)
       usage
       exit 0
@@ -49,7 +54,15 @@ done
 
 cd "$ROOT"
 
+printf '== Code style ==\n'
+Tools/check-code-style.sh
+Tools/check-unit-names.sh
+
 build_fpc_examples=(
+  Examples/RtmpAmf0Smoke.pas
+  Examples/RtmpFlvSmoke.pas
+  Examples/RtmpCodecInteropProbe.pas
+  Examples/RtmpCodecRelayProbe.pas
   Examples/RtmpGatewayConsole.pas
   Examples/RtmpGraphGatewayConsole.pas
   Examples/RtmpIngestConsole.pas
@@ -59,6 +72,7 @@ build_fpc_examples=(
   Examples/RtmpBufferSmoke.pas
   Examples/RtmpChunkReassemblerSmoke.pas
   Examples/RtmpAnalyzerSmoke.pas
+  Examples/RtmpAnalyzerEnhancedSmoke.pas
   Examples/RtmpClientSmoke.pas
   Examples/RtmpClientReconnectSmoke.pas
   Examples/RtmpClientRejectSmoke.pas
@@ -73,13 +87,17 @@ build_fpc_examples=(
   Examples/RtmpPipelineSmoke.pas
   Examples/RtmpLiveSourceSwitcherSmoke.pas
   Examples/RtmpPlayReconnectSmoke.pas
+  Examples/RtmpTlsTransportSmoke.pas
 )
 
 runtime_local=(
+  ./Bin/linux/RtmpAmf0Smoke
+  ./Bin/linux/RtmpFlvSmoke
   ./Bin/linux/RtmpApiErgonomicsSmoke
   ./Bin/linux/RtmpBufferSmoke
   ./Bin/linux/RtmpChunkReassemblerSmoke
   ./Bin/linux/RtmpAnalyzerSmoke
+  ./Bin/linux/RtmpAnalyzerEnhancedSmoke
 )
 
 runtime_socket=(
@@ -108,6 +126,8 @@ done
 if [[ "$RUN_FFMPEG" -eq 1 ]]; then
   printf '== Optional FFmpeg builds ==\n'
   ./build-fpc.sh Examples/RtmpDecoderSmoke.pas --with-ffmpeg
+  ./build-fpc.sh Examples/RtmpEnhancedDecoderProbe.pas --with-ffmpeg
+  ./build-fpc.sh Examples/RtmpEnhancedPreviewProbe.pas --with-ffmpeg
   ./build-fpc.sh Examples/RtmpPreviewCallbackConsole.pas --with-ffmpeg
   if [[ "$RUN_SFML" -eq 1 ]]; then
     ./build-fpc.sh Examples/RtmpSfmlRenderDemo.pas --with-ffmpeg --with-sfml-linux
@@ -132,16 +152,41 @@ if [[ "$RUN_SOCKET_TESTS" -eq 1 ]]; then
     printf 'RUN %s\n' "$exe"
     "$exe"
   done
+  printf 'RUN Tests/tls-transport-smoke.sh\n'
+  Tests/tls-transport-smoke.sh
+  if [[ "$RUN_FFMPEG" -eq 1 ]]; then
+    printf 'RUN Tests/ffmpeg-rtmps-integration.sh\n'
+    Tests/ffmpeg-rtmps-integration.sh
+    if [[ "$RUN_SOAK" -eq 1 ]]; then
+      printf 'RUN Tests/ffmpeg-ingest-soak.sh\n'
+      Tests/ffmpeg-ingest-soak.sh
+    fi
+  fi
 else
   printf '== Socket runtime smokes skipped ==\n'
 fi
 
 if [[ "$RUN_DELPHI" -eq 1 ]]; then
   printf '== Delphi Win64 compile checks ==\n'
+  ./build-delphi.sh Examples/RtmpAmf0Smoke.pas Win64
+  ./build-delphi.sh Examples/RtmpFlvSmoke.pas Win64
+  ./build-delphi.sh Examples/RtmpCodecInteropProbe.pas Win64
+  ./build-delphi.sh Examples/RtmpCodecRelayProbe.pas Win64
+  ./build-delphi.sh Examples/RtmpAnalyzerEnhancedSmoke.pas Win64
+  ./build-delphi.sh Examples/RtmpApiErgonomicsSmoke.pas Win64
+  ./build-delphi.sh Examples/RtmpClientSmoke.pas Win64
   ./build-delphi.sh Examples/RtmpGatewayConsole.pas Win64
   ./build-delphi.sh Examples/RtmpGraphGatewayConsole.pas Win64
   ./build-delphi.sh Examples/RtmpPlayConsole.pas Win64
+  ./build-delphi.sh Examples/RtmpTlsTransportSmoke.pas Win64
+  if [[ "$RUN_SOCKET_TESTS" -eq 1 ]]; then
+    printf 'RUN Tests/tls-schannel-smoke.sh\n'
+    Tests/tls-schannel-smoke.sh
+  fi
   if [[ "$RUN_FFMPEG" -eq 1 ]]; then
+    ./build-delphi.sh Examples/RtmpDecoderSmoke.pas Win64 --with-ffmpeg
+    ./build-delphi.sh Examples/RtmpEnhancedDecoderProbe.pas Win64 --with-ffmpeg
+    ./build-delphi.sh Examples/RtmpEnhancedPreviewProbe.pas Win64 --with-ffmpeg
     ./build-delphi.sh Examples/RtmpPreviewCallbackConsole.pas Win64 --with-ffmpeg
     if [[ "$RUN_SFML" -eq 1 ]]; then
       ./build-delphi.sh Examples/RtmpLivePreview.pas Win64 --with-ffmpeg --with-sfml

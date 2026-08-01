@@ -7,26 +7,26 @@ program RtmpChunkReassemblerSmoke;
 
 uses
   SysUtils,
-  RtmpBytes,
-  RtmpChunkReassembler,
-  RtmpProtocol,
-  RtmpTypes;
+  TRTMP.Core.Bytes,
+  TRTMP.RTMP.Protocol.Chunk,
+  TRTMP.RTMP.Protocol.Core,
+  TRTMP.RTMP.Types;
 
 function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 procedure AppendBytes(var ATarget: TBytes; const ASource: TBytes);
 var
   OldLength: Integer;
 begin
-  OldLength := Length(ATarget);
+  OldLength:=Length(ATarget);
   SetLength(ATarget, OldLength + Length(ASource));
   if Length(ASource) > 0 then
     Move(ASource[0], ATarget[OldLength], Length(ASource));
@@ -52,7 +52,7 @@ end;
 
 procedure AssertTrue(const AMessage: string; AValue: Boolean);
 begin
-  if not AValue then
+  if NOT AValue then
     raise Exception.Create(AMessage);
 end;
 
@@ -61,7 +61,7 @@ var
   I: Integer;
 begin
   AssertEqualInt(AMessage + ' length', Length(AExpected), Length(AActual));
-  for I := 0 to High(AExpected) do
+  for I:=0 to High(AExpected) do
     if AExpected[I] <> AActual[I] then
       raise Exception.CreateFmt('%s mismatch at index=%d expected=%d actual=%d',
         [AMessage, I, AExpected[I], AActual[I]]);
@@ -72,12 +72,12 @@ function BuildChunk(const ABasicFormat: TRtmpChunkHeaderFormat; AChunkStreamID: 
 var
   Writer: TRtmpByteWriter;
 begin
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     WriteChunkBasicHeader(Writer, ABasicFormat, AChunkStreamID);
     WriteChunkMessageHeader(Writer, AHeader);
     Writer.WriteBytes(APayload);
-    Result := Writer.ToBytes;
+    Result:=Writer.ToBytes;
   finally
     Writer.Free;
   end;
@@ -88,14 +88,14 @@ function BuildType0Chunk(AChunkStreamID, AMessageStreamID: UInt32; ATimestamp: U
 var
   Header: TRtmpChunkMessageHeader;
 begin
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType0;
-  Header.Timestamp := ATimestamp;
-  Header.MessageLength := Length(APayload);
-  Header.MessageTypeID := AMessageTypeID;
-  Header.MessageStreamID := AMessageStreamID;
-  Header.HasExtendedTimestamp := ATimestamp >= RTMP_TIMESTAMP_EXTENDED;
-  Result := BuildChunk(hfType0, AChunkStreamID, Header, APayload);
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType0;
+  Header.Timestamp:=ATimestamp;
+  Header.MessageLength:=Length(APayload);
+  Header.MessageTypeID:=AMessageTypeID;
+  Header.MessageStreamID:=AMessageStreamID;
+  Header.HasExtendedTimestamp:=ATimestamp >= RTMP_TIMESTAMP_EXTENDED;
+  Result:=BuildChunk(hfType0, AChunkStreamID, Header, APayload);
 end;
 
 function BuildType1Chunk(AChunkStreamID: UInt32; ATimestampDelta: UInt32;
@@ -103,13 +103,13 @@ function BuildType1Chunk(AChunkStreamID: UInt32; ATimestampDelta: UInt32;
 var
   Header: TRtmpChunkMessageHeader;
 begin
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType1;
-  Header.TimestampDelta := ATimestampDelta;
-  Header.MessageLength := AMessageLength;
-  Header.MessageTypeID := AMessageTypeID;
-  Header.HasExtendedTimestamp := ATimestampDelta >= RTMP_TIMESTAMP_EXTENDED;
-  Result := BuildChunk(hfType1, AChunkStreamID, Header, APayload);
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType1;
+  Header.TimestampDelta:=ATimestampDelta;
+  Header.MessageLength:=AMessageLength;
+  Header.MessageTypeID:=AMessageTypeID;
+  Header.HasExtendedTimestamp:=ATimestampDelta >= RTMP_TIMESTAMP_EXTENDED;
+  Result:=BuildChunk(hfType1, AChunkStreamID, Header, APayload);
 end;
 
 function BuildType3Chunk(AChunkStreamID: UInt32; AExtendedTimestamp: UInt32;
@@ -117,11 +117,11 @@ function BuildType3Chunk(AChunkStreamID: UInt32; AExtendedTimestamp: UInt32;
 var
   Header: TRtmpChunkMessageHeader;
 begin
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType3;
-  Header.HasExtendedTimestamp := AExtendedTimestamp <> 0;
-  Header.Timestamp := AExtendedTimestamp;
-  Result := BuildChunk(hfType3, AChunkStreamID, Header, APayload);
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType3;
+  Header.HasExtendedTimestamp:=AExtendedTimestamp <> 0;
+  Header.Timestamp:=AExtendedTimestamp;
+  Result:=BuildChunk(hfType3, AChunkStreamID, Header, APayload);
 end;
 
 procedure TestType1WithoutPreviousHeader;
@@ -130,9 +130,9 @@ var
   MessageOut: TRtmpChunkMessage;
   Reassembler: TRtmpChunkReassembler;
 begin
-  Reassembler := TRtmpChunkReassembler.Create(128);
+  Reassembler:=TRtmpChunkReassembler.Create(128);
   try
-    Chunk := BuildType1Chunk(3, 10, 1, RtmpMessageTypeID(mtAudio), Bytes([$AF]));
+    Chunk:=BuildType1Chunk(3, 10, 1, RtmpMessageTypeID(mtAudio), Bytes([$AF]));
     Reassembler.AppendBytes(Chunk);
     try
       Reassembler.TryReadMessage(MessageOut);
@@ -153,9 +153,9 @@ var
   MessageOut: TRtmpChunkMessage;
   Reassembler: TRtmpChunkReassembler;
 begin
-  Reassembler := TRtmpChunkReassembler.Create(128);
+  Reassembler:=TRtmpChunkReassembler.Create(128);
   try
-    Chunk := BuildType3Chunk(5, 0, nil);
+    Chunk:=BuildType3Chunk(5, 0, nil);
     Reassembler.AppendBytes(Chunk);
     try
       Reassembler.TryReadMessage(MessageOut);
@@ -177,14 +177,14 @@ var
   Payload: TBytes;
   Reassembler: TRtmpChunkReassembler;
 begin
-  Payload := Bytes([$01, $02, $03, $04, $05]);
-  Reassembler := TRtmpChunkReassembler.Create(128);
+  Payload:=Bytes([$01, $02, $03, $04, $05]);
+  Reassembler:=TRtmpChunkReassembler.Create(128);
   try
-    Chunk := BuildType0Chunk(4, 1, 123, RtmpMessageTypeID(mtDataAMF0), Payload);
+    Chunk:=BuildType0Chunk(4, 1, 123, RtmpMessageTypeID(mtDataAMF0), Payload);
 
     Reassembler.AppendBytes(Copy(Chunk, 0, 8));
     AssertTrue('truncated chunk should not yet yield a message',
-      not Reassembler.TryReadMessage(MessageOut));
+      NOT Reassembler.TryReadMessage(MessageOut));
     AssertEqualInt('truncated pending bytes after first append', 8, Reassembler.PendingBytes);
 
     Reassembler.AppendBytes(Copy(Chunk, 8, Length(Chunk) - 8));
@@ -208,19 +208,19 @@ var
   MessageOut: TRtmpChunkMessage;
   Reassembler: TRtmpChunkReassembler;
 begin
-  Reassembler := TRtmpChunkReassembler.Create(4);
+  Reassembler:=TRtmpChunkReassembler.Create(4);
   try
-    Header := Default(TRtmpChunkMessageHeader);
-    Header.HeaderFormat := hfType0;
-    Header.Timestamp := 0;
-    Header.MessageLength := 6;
-    Header.MessageTypeID := RtmpMessageTypeID(mtVideo);
-    Header.MessageStreamID := 1;
-    Header.HasExtendedTimestamp := False;
-    FirstChunk := BuildChunk(hfType0, 6, Header, Bytes([$11, $22, $33, $44]));
+    Header:=Default(TRtmpChunkMessageHeader);
+    Header.HeaderFormat:=hfType0;
+    Header.Timestamp:=0;
+    Header.MessageLength:=6;
+    Header.MessageTypeID:=RtmpMessageTypeID(mtVideo);
+    Header.MessageStreamID:=1;
+    Header.HasExtendedTimestamp:=False;
+    FirstChunk:=BuildChunk(hfType0, 6, Header, Bytes([$11, $22, $33, $44]));
     Reassembler.AppendBytes(FirstChunk);
     AssertTrue('first split chunk should not yet complete message',
-      not Reassembler.TryReadMessage(MessageOut));
+      NOT Reassembler.TryReadMessage(MessageOut));
 
     Reassembler.AppendBytes(BuildType0Chunk(6, 1, 10, RtmpMessageTypeID(mtVideo),
       Bytes([$77])));
@@ -246,19 +246,19 @@ var
   Reassembler: TRtmpChunkReassembler;
   Wire: TBytes;
 begin
-  Payload := Bytes([$10, $20, $30, $40, $50, $60]);
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType0;
-  Header.Timestamp := 55;
-  Header.MessageLength := Length(Payload);
-  Header.MessageTypeID := RtmpMessageTypeID(mtVideo);
-  Header.MessageStreamID := 1;
-  Header.HasExtendedTimestamp := False;
+  Payload:=Bytes([$10, $20, $30, $40, $50, $60]);
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType0;
+  Header.Timestamp:=55;
+  Header.MessageLength:=Length(Payload);
+  Header.MessageTypeID:=RtmpMessageTypeID(mtVideo);
+  Header.MessageStreamID:=1;
+  Header.HasExtendedTimestamp:=False;
 
-  Wire := BuildChunk(hfType0, 6, Header, Bytes([$10, $20, $30, $40]));
+  Wire:=BuildChunk(hfType0, 6, Header, Bytes([$10, $20, $30, $40]));
   AppendBytes(Wire, BuildType3Chunk(6, 0, Bytes([$50, $60])));
 
-  Reassembler := TRtmpChunkReassembler.Create(4);
+  Reassembler:=TRtmpChunkReassembler.Create(4);
   try
     Reassembler.AppendBytes(Wire);
     AssertTrue('buffered continuation should reconstruct in a single call',
@@ -279,22 +279,22 @@ var
   Reassembler: TRtmpChunkReassembler;
   FirstChunk: TBytes;
 begin
-  Payload := Bytes([$10, $20, $30, $40, $50, $60]);
-  FirstPayload := Bytes([$10, $20, $30, $40]);
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType0;
-  Header.Timestamp := $01020304;
-  Header.MessageLength := Length(Payload);
-  Header.MessageTypeID := RtmpMessageTypeID(mtVideo);
-  Header.MessageStreamID := 1;
-  Header.HasExtendedTimestamp := True;
-  FirstChunk := BuildChunk(hfType0, 6, Header, FirstPayload);
+  Payload:=Bytes([$10, $20, $30, $40, $50, $60]);
+  FirstPayload:=Bytes([$10, $20, $30, $40]);
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType0;
+  Header.Timestamp:=$01020304;
+  Header.MessageLength:=Length(Payload);
+  Header.MessageTypeID:=RtmpMessageTypeID(mtVideo);
+  Header.MessageStreamID:=1;
+  Header.HasExtendedTimestamp:=True;
+  FirstChunk:=BuildChunk(hfType0, 6, Header, FirstPayload);
 
-  Reassembler := TRtmpChunkReassembler.Create(4);
+  Reassembler:=TRtmpChunkReassembler.Create(4);
   try
     Reassembler.AppendBytes(FirstChunk);
     AssertTrue('extended-timestamp first chunk should be incomplete',
-      not Reassembler.TryReadMessage(MessageOut));
+      NOT Reassembler.TryReadMessage(MessageOut));
 
     Reassembler.AppendBytes(BuildType3Chunk(6, $01020304, Bytes([$50, $60])));
     AssertTrue('extended-timestamp message should reconstruct',
@@ -316,23 +316,23 @@ var
   Payload: TBytes;
   Reassembler: TRtmpChunkReassembler;
 begin
-  Payload := Bytes([$11, $22, $33, $44, $55, $66]);
-  Reassembler := TRtmpChunkReassembler.Create(4);
+  Payload:=Bytes([$11, $22, $33, $44, $55, $66]);
+  Reassembler:=TRtmpChunkReassembler.Create(4);
   try
-    Header := Default(TRtmpChunkMessageHeader);
-    Header.HeaderFormat := hfType0;
-    Header.Timestamp := 90;
-    Header.MessageLength := Length(Payload);
-    Header.MessageTypeID := RtmpMessageTypeID(mtVideo);
-    Header.MessageStreamID := 1;
-    FirstChunk := BuildChunk(hfType0, 7, Header, Bytes([$11, $22, $33, $44]));
+    Header:=Default(TRtmpChunkMessageHeader);
+    Header.HeaderFormat:=hfType0;
+    Header.Timestamp:=90;
+    Header.MessageLength:=Length(Payload);
+    Header.MessageTypeID:=RtmpMessageTypeID(mtVideo);
+    Header.MessageStreamID:=1;
+    FirstChunk:=BuildChunk(hfType0, 7, Header, Bytes([$11, $22, $33, $44]));
     Reassembler.AppendBytes(FirstChunk);
     AssertTrue('partial message should not complete before abort',
-      not Reassembler.TryReadMessage(MessageOut));
+      NOT Reassembler.TryReadMessage(MessageOut));
 
     Reassembler.AbortChunkStream(7);
-    Header.Timestamp := 120;
-    FirstChunk := BuildChunk(hfType0, 7, Header, Bytes([$11, $22, $33, $44]));
+    Header.Timestamp:=120;
+    FirstChunk:=BuildChunk(hfType0, 7, Header, Bytes([$11, $22, $33, $44]));
     AppendBytes(FirstChunk, BuildType3Chunk(7, 0, Bytes([$55, $66])));
     Reassembler.AppendBytes(FirstChunk);
     AssertTrue('message after abort should reconstruct cleanly',

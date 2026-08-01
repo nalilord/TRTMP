@@ -16,11 +16,11 @@ uses
   {$ENDIF}
   {$ENDIF}
   SysUtils,
-  RtmpCompat,
-  RtmpPreview,
-  RtmpPreviewSfml,
-  RtmpServer,
-  RtmpTypes,
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Preview,
+  TRTMP.RTMP.Preview.SFML,
+  TRTMP.RTMP.Server,
+  TRTMP.RTMP.Types,
   SfmlSystem;
 
 type
@@ -46,30 +46,30 @@ var
   Config: TRtmpPreviewConfig;
 begin
   inherited Create;
-  FLastStatsTick := 0;
+  FLastStatsTick:=0;
 
-  Config := DefaultRtmpPreviewConfig;
-  Config.Server.BindAddress := '0.0.0.0';
-  Config.Server.Port := 1935;
-  Config.Server.BufferMaxPackets := 1024;
-  Config.Server.BufferMaxBytes := 16 * 1024 * 1024;
-  Config.Server.BufferMaxDurationMS := 3000;
-  Config.Server.EnableAnalyzer := True;
-  Config.LogLevel := llInfo;
-  Config.SelectionMode := psmFirstActive;
-  Config.PacketQueueMax := 256;
-  Config.DropPolicy := pdpDropToLatestKeyframe;
+  Config:=DefaultRtmpPreviewConfig;
+  Config.Server.BindAddress:='0.0.0.0';
+  Config.Server.Port:=1935;
+  Config.Server.BufferMaxPackets:=1024;
+  Config.Server.BufferMaxBytes:=16 * 1024 * 1024;
+  Config.Server.BufferMaxDurationMS:=3000;
+  Config.Server.EnableAnalyzer:=True;
+  Config.LogLevel:=llInfo;
+  Config.SelectionMode:=psmFirstActive;
+  Config.PacketQueueMax:=256;
+  Config.DropPolicy:=pdpDropToLatestKeyframe;
 
-  FPreview := TRtmpPreview.Create;
-  FPreview.Config := Config;
-  FPreview.OnLog := HandleLog;
-  FPreview.OnStreamStarted := HandleStreamStarted;
-  FPreview.OnStreamStopped := HandleStreamStopped;
+  FPreview:=TRtmpPreview.Create;
+  FPreview.Config:=Config;
+  FPreview.OnLog:=HandleLog;
+  FPreview.OnStreamStarted:=HandleStreamStarted;
+  FPreview.OnStreamStopped:=HandleStreamStopped;
 
-  FRenderer := TRtmpSfmlPreviewRenderer.Create(960, 540,
+  FRenderer:=TRtmpSfmlPreviewRenderer.Create(960, 540,
     'TRTMP Live Preview - waiting for publisher');
-  FRenderer.ScaleMode := ssmFit;
-  FPreview.OnFrame := FRenderer.HandleFrame;
+  FRenderer.ScaleMode:=ssmFit;
+  FPreview.OnFrame:=FRenderer.HandleFrame;
 end;
 
 destructor TPreviewApp.Destroy;
@@ -119,17 +119,17 @@ begin
 
     if (RtmpGetTickCount64 - FLastStatsTick) >= 1000 then
     begin
-      FLastStatsTick := RtmpGetTickCount64;
-      ServerStats := FPreview.Server.GetStats;
-      PreviewStats := FPreview.Stats;
+      FLastStatsTick:=RtmpGetTickCount64;
+      ServerStats:=FPreview.Server.GetStats;
+      PreviewStats:=FPreview.Stats;
       WriteLn(Format(
         '[STATS] active=%d publishes=%d bytes=%d packets=%d bitrate=%.0f fps=%.2f lagMS=%d pq=%d/%dKB drop=%d(%dKB) frames=%d pfps=%.2f avg=%.2f age=%dms switch=%d decOpen=%d submitErr=%d recvErr=%d convErr=%d',
         [ServerStats.ActiveSessions, ServerStats.ActivePublishes,
          ServerStats.BytesReceived, ServerStats.PacketsReceived,
          ServerStats.CurrentBitrate, ServerStats.Analysis.VideoFPS,
          ServerStats.TimelineLagMS, PreviewStats.QueuePackets,
-         PreviewStats.QueueBytes div 1024, PreviewStats.DroppedPackets,
-         PreviewStats.DroppedBytes div 1024, PreviewStats.FramesDecoded,
+         PreviewStats.QueueBytes DIV 1024, PreviewStats.DroppedPackets,
+         PreviewStats.DroppedBytes DIV 1024, PreviewStats.FramesDecoded,
          PreviewStats.CurrentFPS, PreviewStats.AverageFPS,
          PreviewStats.LastFrameAgeMS, PreviewStats.SwitchCount,
          PreviewStats.DecoderOpenCount, PreviewStats.DecoderSubmitErrors,
@@ -147,7 +147,7 @@ var
 
 begin
   RtmpMaskFloatingPointExceptions;
-  App := TPreviewApp.Create;
+  App:=TPreviewApp.Create;
   try
     App.Run;
   finally

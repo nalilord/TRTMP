@@ -17,12 +17,12 @@ uses
   {$ENDIF}
   Classes,
   SysUtils,
-  RtmpCompat,
-  RtmpClient,
-  RtmpPacket,
-  RtmpServer,
-  RtmpServerSession,
-  RtmpTypes;
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Client,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Server,
+  TRTMP.RTMP.Server.Session,
+  TRTMP.RTMP.Types;
 
 type
   TStatsThread = class(TThread)
@@ -67,9 +67,9 @@ type
 constructor TStatsThread.Create(AServer: TRtmpServer; AClient: TRtmpClient);
 begin
   inherited Create(True);
-  FreeOnTerminate := False;
-  FClient := AClient;
-  FServer := AServer;
+  FreeOnTerminate:=False;
+  FClient:=AClient;
+  FServer:=AServer;
 end;
 
 procedure TStatsThread.Execute;
@@ -77,14 +77,14 @@ var
   ClientStats: TRtmpClientStats;
   ServerStats: TRtmpServerStats;
 begin
-  while not Terminated do
+  while NOT Terminated do
   begin
     RtmpSleepMS(1000);
-    if Terminated or (FServer = nil) or (FClient = nil) then
+    if Terminated OR (FServer = nil) OR (FClient = nil) then
       Break;
 
-    ServerStats := FServer.GetStats;
-    ClientStats := FClient.GetStats;
+    ServerStats:=FServer.GetStats;
+    ClientStats:=FClient.GetStats;
     WriteLn(Format(
       '[STATS] ingestActive=%d ingestBytes=%d ingestPackets=%d ingestBitrate=%.0f ingestAvg=%.0f relayState=%d relayBytes=%d relayPackets=%d relayBitrate=%.0f relayAvg=%.0f reconnects=%d bufferPackets=%d bufferBytes=%d evicted=%d evictPkt=%d evictByte=%d retained=%d retainedBytes=%d',
       [ServerStats.ActiveSessions, ServerStats.BytesReceived,
@@ -102,25 +102,25 @@ end;
 constructor TRestreamConsoleApp.Create;
 begin
   inherited Create;
-  FClient := TRtmpClient.Create;
-  FClientLogLevel := llInfo;
-  FDebugMode := False;
-  FPacketCount := 0;
-  FServer := TRtmpServer.Create;
-  FStatsThread := nil;
-  FTimestampMode := tmPassThrough;
+  FClient:=TRtmpClient.Create;
+  FClientLogLevel:=llInfo;
+  FDebugMode:=False;
+  FPacketCount:=0;
+  FServer:=TRtmpServer.Create;
+  FStatsThread:=nil;
+  FTimestampMode:=tmPassThrough;
 
-  FServer.LogSink.OnLog := HandleServerLog;
-  FServer.OnClientConnected := HandleServerClientConnected;
-  FServer.OnClientDisconnected := HandleServerClientDisconnected;
-  FServer.OnPublishStarted := HandlePublishStarted;
-  FServer.OnPublishStopped := HandlePublishStopped;
-  FServer.OnData := HandleServerData;
+  FServer.LogSink.OnLog:=HandleServerLog;
+  FServer.OnClientConnected:=HandleServerClientConnected;
+  FServer.OnClientDisconnected:=HandleServerClientDisconnected;
+  FServer.OnPublishStarted:=HandlePublishStarted;
+  FServer.OnPublishStopped:=HandlePublishStopped;
+  FServer.OnData:=HandleServerData;
 
-  FClient.LogSink.OnLog := HandleClientLog;
-  FClient.OnConnected := HandleClientConnected;
-  FClient.OnDisconnected := HandleClientDisconnected;
-  FClient.OnReconnect := HandleClientReconnect;
+  FClient.LogSink.OnLog:=HandleClientLog;
+  FClient.OnConnected:=HandleClientConnected;
+  FClient.OnDisconnected:=HandleClientDisconnected;
+  FClient.OnReconnect:=HandleClientReconnect;
 end;
 
 destructor TRestreamConsoleApp.Destroy;
@@ -139,6 +139,7 @@ end;
 procedure TRestreamConsoleApp.HandleClientConnected(Sender: TObject);
 begin
   WriteLn('Relay connected and publish established.');
+  Flush(Output);
 end;
 
 procedure TRestreamConsoleApp.HandleClientDisconnected(Sender: TObject);
@@ -193,7 +194,7 @@ procedure TRestreamConsoleApp.HandleServerData(Sender: TObject;
   Session: TRtmpServerSession; Packet: TRtmpPacket);
 begin
   Inc(FPacketCount);
-  if FDebugMode or Packet.HasFlag(pfIsCodecConfig) or Packet.HasFlag(pfIsKeyframe) then
+  if FDebugMode OR Packet.HasFlag(pfIsCodecConfig) OR Packet.HasFlag(pfIsKeyframe) then
     WriteLn(Format('Ingest packet stream=%s type=%d ts=%d size=%d keyframe=%s config=%s',
       [Session.StreamName, Ord(Packet.MessageType), Packet.Timestamp,
        Packet.PayloadSize, BoolToStr(Packet.HasFlag(pfIsKeyframe), True),
@@ -225,47 +226,47 @@ begin
     Exit;
   end;
 
-  FTargetURL := ParamStr(1);
-  ListenPort := 1935;
+  FTargetURL:=ParamStr(1);
+  ListenPort:=1935;
   if ParamCount >= 2 then
-    ListenPort := StrToIntDef(ParamStr(2), ListenPort);
-  for I := 3 to ParamCount do
+    ListenPort:=StrToIntDef(ParamStr(2), ListenPort);
+  for I:=3 to ParamCount do
   begin
-    Token := LowerCase(Trim(ParamStr(I)));
+    Token:=LowerCase(Trim(ParamStr(I)));
     if Token = 'debug' then
-      FDebugMode := True
-    else if (Token = 'pass') or (Token = 'passthrough') or (Token = 'pass-through') then
-      FTimestampMode := tmPassThrough
-    else if (Token = 'rebase') or (Token = 'rebased') then
-      FTimestampMode := tmRebased
-    else if (Token = 'smooth') or (Token = 'smoothed') then
-      FTimestampMode := tmSmoothed;
+      FDebugMode:=True
+    else if (Token = 'pass') OR (Token = 'passthrough') OR (Token = 'pass-through') then
+      FTimestampMode:=tmPassThrough
+    else if (Token = 'rebase') OR (Token = 'rebased') then
+      FTimestampMode:=tmRebased
+    else if (Token = 'smooth') OR (Token = 'smoothed') then
+      FTimestampMode:=tmSmoothed;
   end;
 
   if FDebugMode then
-    FClientLogLevel := llDebug
+    FClientLogLevel:=llDebug
   else
-    FClientLogLevel := llInfo;
+    FClientLogLevel:=llInfo;
 
-  ServerConfig := DefaultRtmpServerConfig;
-  ServerConfig.BindAddress := '0.0.0.0';
-  ServerConfig.Port := ListenPort;
-  ServerConfig.BufferMaxPackets := 1024;
-  ServerConfig.BufferMaxBytes := 16 * 1024 * 1024;
-  FServer.Config := ServerConfig;
-  FServer.MinLogLevel := FClientLogLevel;
+  ServerConfig:=DefaultRtmpServerConfig;
+  ServerConfig.BindAddress:='0.0.0.0';
+  ServerConfig.Port:=ListenPort;
+  ServerConfig.BufferMaxPackets:=1024;
+  ServerConfig.BufferMaxBytes:=16 * 1024 * 1024;
+  FServer.Config:=ServerConfig;
+  FServer.MinLogLevel:=FClientLogLevel;
 
-  ClientConfig := DefaultRtmpClientConfig;
-  ClientConfig.TargetURL := FTargetURL;
-  ClientConfig.OutChunkSize := 4096;
-  ClientConfig.TimestampMode := FTimestampMode;
-  FClient.Config := ClientConfig;
+  ClientConfig:=DefaultRtmpClientConfig;
+  ClientConfig.TargetURL:=FTargetURL;
+  ClientConfig.OutChunkSize:=4096;
+  ClientConfig.TimestampMode:=FTimestampMode;
+  FClient.Config:=ClientConfig;
   FClient.AttachBuffer(FServer.Buffer);
 
   FServer.Start;
   try
     FClient.Start;
-    FStatsThread := TStatsThread.Create(FServer, FClient);
+    FStatsThread:=TStatsThread.Create(FServer, FClient);
     FStatsThread.Start;
 
     WriteLn(Format('Listening for ingest on rtmp://127.0.0.1:%d/live/test', [ListenPort]));
@@ -280,6 +281,7 @@ begin
     else
       WriteLn('Log mode: info');
     WriteLn('Press Enter to stop.');
+    Flush(Output);
     ReadLn;
 
     FStatsThread.Terminate;
@@ -295,7 +297,7 @@ var
   App: TRestreamConsoleApp;
 
 begin
-  App := TRestreamConsoleApp.Create;
+  App:=TRestreamConsoleApp.Create;
   try
     App.Run;
   finally

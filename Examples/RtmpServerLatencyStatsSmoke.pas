@@ -12,13 +12,13 @@ uses
   {$ENDIF}
   {$ENDIF}
   SysUtils,
-  RtmpBuffer,
-  RtmpClient,
-  RtmpPacket,
-  RtmpServer,
-  RtmpServerSession,
-  RtmpStats,
-  RtmpTypes;
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.RTMP.Client,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Server,
+  TRTMP.RTMP.Server.Session,
+  TRTMP.RTMP.Media.Stats,
+  TRTMP.RTMP.Types;
 
 type
   TLatencyStatsSmokeApp = class
@@ -34,6 +34,7 @@ type
     procedure PushPacket(AMessageType: TRtmpMessageType; ATimestamp: UInt32;
       AChunkStreamID: UInt32; const APayloadBytes: array of Byte;
       AFlags: TRtmpPacketFlags);
+    procedure TestAnalyzerConfigSurface;
     procedure TestDeterministicTimelineStats;
   public
     constructor Create;
@@ -45,10 +46,10 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 constructor TLatencyStatsSmokeApp.Create;
@@ -57,23 +58,23 @@ var
   ServerConfig: TRtmpServerConfig;
 begin
   inherited Create;
-  FClient := TRtmpClient.Create;
-  FNextSequenceNo := 0;
-  FPublishStarted := False;
-  FServer := TRtmpServer.Create;
-  FSourceBuffer := TRtmpCircularBuffer.Create(128, 4 * 1024 * 1024);
+  FClient:=TRtmpClient.Create;
+  FNextSequenceNo:=0;
+  FPublishStarted:=False;
+  FServer:=TRtmpServer.Create;
+  FSourceBuffer:=TRtmpCircularBuffer.Create(128, 4 * 1024 * 1024);
 
-  ServerConfig := DefaultRtmpServerConfig;
-  ServerConfig.BindAddress := '127.0.0.1';
-  ServerConfig.Port := 1946;
-  FServer.Config := ServerConfig;
-  FServer.OnPublishStarted := HandlePublishStarted;
+  ServerConfig:=DefaultRtmpServerConfig;
+  ServerConfig.BindAddress:='127.0.0.1';
+  ServerConfig.Port:=1946;
+  FServer.Config:=ServerConfig;
+  FServer.OnPublishStarted:=HandlePublishStarted;
 
   FClient.AttachBuffer(FSourceBuffer);
-  ClientConfig := DefaultRtmpClientConfig;
-  ClientConfig.TargetURL := 'rtmp://127.0.0.1:1946/live/test';
-  ClientConfig.OutChunkSize := 4096;
-  FClient.Config := ClientConfig;
+  ClientConfig:=DefaultRtmpClientConfig;
+  ClientConfig.TargetURL:='rtmp://127.0.0.1:1946/live/test';
+  ClientConfig.OutChunkSize:=4096;
+  FClient.Config:=ClientConfig;
 end;
 
 destructor TLatencyStatsSmokeApp.Destroy;
@@ -87,7 +88,7 @@ end;
 procedure TLatencyStatsSmokeApp.AssertTrue(const AMessage: string;
   ACondition: Boolean);
 begin
-  if not ACondition then
+  if NOT ACondition then
     raise Exception.Create(AMessage);
 end;
 
@@ -102,7 +103,7 @@ end;
 procedure TLatencyStatsSmokeApp.HandlePublishStarted(Sender: TObject;
   Session: TRtmpServerSession);
 begin
-  FPublishStarted := True;
+  FPublishStarted:=True;
 end;
 
 procedure TLatencyStatsSmokeApp.PushPacket(AMessageType: TRtmpMessageType;
@@ -111,11 +112,33 @@ procedure TLatencyStatsSmokeApp.PushPacket(AMessageType: TRtmpMessageType;
 var
   Packet: TRtmpPacket;
 begin
-  Packet := TRtmpPacket.Create(AMessageType, ATimestamp, ATimestamp, 1,
+  Packet:=TRtmpPacket.Create(AMessageType, ATimestamp, ATimestamp, 1,
     AChunkStreamID, TRtmpSharedPayload.Create(Bytes(APayloadBytes)), AFlags,
     FNextSequenceNo);
   Inc(FNextSequenceNo);
   FSourceBuffer.Push(Packet);
+end;
+
+procedure TLatencyStatsSmokeApp.TestAnalyzerConfigSurface;
+var
+  DisabledServer: TRtmpServer;
+  ServerConfig: TRtmpServerConfig;
+  Stats: TRtmpServerStats;
+begin
+  ServerConfig:=DefaultRtmpServerConfig;
+  ServerConfig.EnableAnalyzer:=False;
+  DisabledServer:=TRtmpServer.Create(ServerConfig);
+  try
+    Stats:=DisabledServer.GetStats;
+    AssertTrue('disabled analyzer should not expose a video codec',
+      Stats.Analysis.VideoCodec = '');
+    AssertTrue('disabled analyzer should not expose an audio codec',
+      Stats.Analysis.AudioCodec = '');
+    AssertTrue('disabled analyzer should not expose packet metrics',
+      Stats.Analysis.PacketRate = 0.0);
+  finally
+    DisabledServer.Free;
+  end;
 end;
 
 procedure TLatencyStatsSmokeApp.TestDeterministicTimelineStats;
@@ -124,9 +147,9 @@ var
   Stats: TRtmpServerStats;
   Tracker: TRtmpServerStatsTracker;
 begin
-  Tracker := TRtmpServerStatsTracker.Create;
+  Tracker:=TRtmpServerStatsTracker.Create;
   try
-    Packet := TRtmpPacket.Create(mtVideo, 0, 0, 1, 6,
+    Packet:=TRtmpPacket.Create(mtVideo, 0, 0, 1, 6,
       TRtmpSharedPayload.Create(Bytes([$17, $01])), [pfIsVideo, pfIsKeyframe],
       1, 1000);
     try
@@ -135,7 +158,7 @@ begin
       Packet.Free;
     end;
 
-    Packet := TRtmpPacket.Create(mtVideo, 40, 40, 1, 6,
+    Packet:=TRtmpPacket.Create(mtVideo, 40, 40, 1, 6,
       TRtmpSharedPayload.Create(Bytes([$27, $01])), [pfIsVideo], 2, 1120);
     try
       Tracker.NotePacket(Packet);
@@ -143,11 +166,11 @@ begin
       Packet.Free;
     end;
 
-    Stats := Tracker.Snapshot;
+    Stats:=Tracker.Snapshot;
     AssertEqualInt('deterministic lag after slow arrival', 80, Stats.TimelineLagMS);
     AssertEqualInt('deterministic max lag after slow arrival', 80, Stats.MaxTimelineLagMS);
 
-    Packet := TRtmpPacket.Create(mtVideo, 120, 80, 1, 6,
+    Packet:=TRtmpPacket.Create(mtVideo, 120, 80, 1, 6,
       TRtmpSharedPayload.Create(Bytes([$27, $01])), [pfIsVideo], 3, 1160);
     try
       Tracker.NotePacket(Packet);
@@ -155,11 +178,11 @@ begin
       Packet.Free;
     end;
 
-    Stats := Tracker.Snapshot;
+    Stats:=Tracker.Snapshot;
     AssertEqualInt('deterministic lag after partial catch-up', 40, Stats.TimelineLagMS);
     AssertEqualInt('deterministic max lag retains peak', 80, Stats.MaxTimelineLagMS);
 
-    Packet := TRtmpPacket.Create(mtVideo, 300, 180, 1, 6,
+    Packet:=TRtmpPacket.Create(mtVideo, 300, 180, 1, 6,
       TRtmpSharedPayload.Create(Bytes([$27, $01])), [pfIsVideo], 4, 1200);
     try
       Tracker.NotePacket(Packet);
@@ -167,14 +190,14 @@ begin
       Packet.Free;
     end;
 
-    Stats := Tracker.Snapshot;
+    Stats:=Tracker.Snapshot;
     AssertEqualInt('deterministic negative lag when media runs ahead',
       -100, Stats.TimelineLagMS);
     AssertEqualInt('deterministic max lag remains positive peak',
       80, Stats.MaxTimelineLagMS);
 
     Tracker.NotePublishStarted;
-    Stats := Tracker.Snapshot;
+    Stats:=Tracker.Snapshot;
     AssertEqualInt('deterministic lag reset on publish start', 0, Stats.TimelineLagMS);
     AssertEqualInt('deterministic max lag reset on publish start', 0, Stats.MaxTimelineLagMS);
   finally
@@ -185,15 +208,17 @@ end;
 procedure TLatencyStatsSmokeApp.Run;
 var
   Deadline: UInt64;
+  IdleStats: TRtmpServerStats;
   Stats: TRtmpServerStats;
 begin
+  TestAnalyzerConfigSurface;
   TestDeterministicTimelineStats;
 
   FServer.Start;
   try
     FClient.Start;
     try
-      Deadline := GetTickCount64 + 4000;
+      Deadline:=GetTickCount64 + 4000;
       while GetTickCount64 < Deadline do
       begin
         if FPublishStarted then
@@ -222,7 +247,9 @@ begin
         [pfIsVideo, pfIsKeyframe]);
       Sleep(80);
 
-      Stats := FServer.GetStats;
+      Stats:=FServer.GetStats;
+      Sleep(50);
+      IdleStats:=FServer.GetStats;
     finally
       FClient.Stop;
     end;
@@ -238,18 +265,26 @@ begin
     Abs(Stats.TimelineLagMS) <= 250);
   AssertTrue('latency smoke failed: expected max lag to track lag',
     Stats.MaxTimelineLagMS >= Stats.TimelineLagMS);
+  AssertTrue('latency smoke failed: expected live current bitrate',
+    Stats.CurrentBitrate > 0.0);
+  AssertTrue('latency smoke failed: expected cumulative average bitrate',
+    IdleStats.AverageBitrate > 0.0);
+  AssertTrue('latency smoke failed: current bitrate should fall idle',
+    IdleStats.CurrentBitrate = 0.0);
+  AssertTrue('latency smoke failed: enabled analyzer should expose AVC',
+    Stats.Analysis.VideoCodec = 'AVC');
 
   WriteLn(Format(
-    'Server latency stats smoke passed: idleMS=%d lagMS=%d maxLagMS=%d packets=%d',
+    'Server latency stats smoke passed: idleMS=%d lagMS=%d maxLagMS=%d packets=%d current=%.0f average=%.0f',
     [Stats.LastPacketIdleMS, Stats.TimelineLagMS, Stats.MaxTimelineLagMS,
-     Stats.PacketsReceived]));
+     Stats.PacketsReceived, Stats.CurrentBitrate, IdleStats.AverageBitrate]));
 end;
 
 var
   App: TLatencyStatsSmokeApp;
 
 begin
-  App := TLatencyStatsSmokeApp.Create;
+  App:=TLatencyStatsSmokeApp.Create;
   try
     App.Run;
   finally

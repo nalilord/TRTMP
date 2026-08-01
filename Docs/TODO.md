@@ -21,6 +21,10 @@ Reason:
 
 ### Foundation
 - [x] Define shared RTMP types, enums, config records, and stats records.
+- [x] Establish protocol-aware unit namespaces that leave room for RTP, RTSP,
+  and WebRTC additions.
+- [x] Normalize the Pascal sources to the repository code-style guide and add
+  an automated formatting check.
 - [x] Implement packet model with shared payload ownership.
 - [x] Implement native transport abstraction with pluggable backend boundary.
 - [x] Provide default native socket transport for Windows/Unix style targets.
@@ -61,6 +65,8 @@ Reason:
 - [x] Implement relay from shared buffer into outbound target.
 - [x] Replay bootstrap headers and buffered media on connect/reconnect.
 - [x] Implement reconnect with backoff.
+- [x] Implement Enhanced RTMP reconnect-request emission, redirects, and
+  keyframe-boundary relay cutover.
 - [x] Add explicit target-response classification for connect/create/publish failures.
 - [x] Tolerate optional `releaseStream` and `FCPublish` rejection.
 - [x] Prevent media send before publish acceptance.
@@ -89,8 +95,15 @@ Reason:
 - [ ] Client / Interop: re-check reconnect and publish behavior against real-world targets after server hardening.
 - [ ] Windows / OBS: re-test runtime ingest and preview on Windows after the latest hardening changes.
 - [ ] Interop: test relay into additional RTMP targets beyond nginx-rtmp.
-- [ ] Release prep: settle final repository presentation and third-party packaging.
-- [ ] Twitch / VOD-track: create capture-backed fixtures before implementing compatibility claims.
+- [x] Release prep: document the repository layout and keep optional third-party
+  SDKs local and ignored.
+- [ ] Twitch / VOD-track: run a credentialed Twitch ingest/VOD acceptance test.
+
+The real-target, Windows/OBS GUI, and credentialed Twitch checks above are
+explicitly postponed until their required external service, GUI session, or
+credentials are available. Local equivalents must remain automated; they are
+not considered substitutes for those eventual acceptance checks. See
+[Postponed Live Validation](postponed-live-validation.md).
 
 ## Next Tasks
 
@@ -166,27 +179,36 @@ Reason:
 - [ ] Keep OBS in actual Twitch service mode for capture instead of generic custom RTMP mode.
 - [ ] Record raw packet/message differences at the RTMP session level.
 - [ ] Diff command messages, data messages, audio packets, and control packets between the two captures.
-- [ ] Determine whether the Twitch-specific difference is:
-  extra audio track packets, extra AMF/data messages, enhanced RTMP signaling, or another ingest convention.
+- [x] Determine the current OBS 30.2+ difference: the VOD/archive encoder is
+  Enhanced RTMP audio TrackID 1 while live audio remains track 0.
 - [ ] Add fixture files or reproducible capture notes to the repo.
 - [ ] Add logging in the library to expose unknown/non-media RTMP messages without dropping them.
 - [ ] Add a strict passthrough mode for non-media/data/control messages.
-- [ ] Extend the packet model with track-aware fields if the capture confirms multiple logical audio tracks.
-- [ ] Model track identity/role explicitly, for example `TrackId`, `TrackKind`, `TrackRole`.
-- [ ] Preserve and relay Twitch/VOD-track related signaling byte-faithfully by default.
-- [ ] Add regression tests that prove the relevant Twitch-side signaling survives ingest and relay unchanged.
-- [ ] Document Twitch / VOD-track findings once the capture-based analysis is done.
+- [x] Extend parsing, buffering, analysis, and decode metadata with track identity.
+- [ ] Model semantic roles beyond the current Twitch TrackID 1 convention.
+- [x] Preserve and relay modern Twitch/VOD-track signaling byte-faithfully by default.
+- [x] Add deterministic and loopback regressions for VOD-track bootstrap/relay.
+- [x] Document modern OBS/Twitch VOD-track relay behavior and enforcement.
 
 ### Advanced Routing
-- [ ] One-to-many forwarding from a single ingest source.
-- [ ] Stream selection by app/key.
-- [ ] Config-driven pipeline assembly.
-- [ ] Per-target relay policy and buffering options.
+- [x] One-to-many forwarding from a single ingest source.
+- [x] Stream selection by app/key.
+- [x] Config-driven pipeline assembly.
+- [x] Per-target relay policy and buffering options.
 
 ### Nice To Have
 - [ ] Structured test fixtures instead of only example-smoke executables.
-- [ ] Optional authentication / authorization hooks.
-- [ ] RTMPS/TLS strategy.
+- [x] Optional authentication / authorization hooks.
+- [x] RTMPS/TLS provider strategy, secure scheme handling, policy configuration,
+  and fail-closed dispatch.
+- [x] Add native Windows Schannel and Unix system-OpenSSL transports plus
+  certificate-backed client/server loopback coverage.
+- [x] Add verified FFmpeg RTMPS ingest and packet-exact TRTMP RTMPS relay
+  integration coverage.
+- [x] Add a configurable real-time FFmpeg ingest/RSS soak harness.
+- [ ] Add Schannel custom-root and server-side client-certificate validation.
+- [x] Add password-protected PEM private-key loading and rejection coverage to
+  the OpenSSL provider.
 - [ ] More detailed metrics export.
 
 ## Notes

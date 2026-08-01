@@ -17,11 +17,11 @@ uses
   {$ENDIF}
   Classes,
   SysUtils,
-  RtmpCompat,
-  RtmpPacket,
-  RtmpServer,
-  RtmpServerSession,
-  RtmpTypes;
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Server,
+  TRTMP.RTMP.Server.Session,
+  TRTMP.RTMP.Types;
 
 type
   TStatsThread = class(TThread)
@@ -60,21 +60,21 @@ type
 constructor TStatsThread.Create(AServer: TRtmpServer);
 begin
   inherited Create(True);
-  FreeOnTerminate := False;
-  FServer := AServer;
+  FreeOnTerminate:=False;
+  FServer:=AServer;
 end;
 
 procedure TStatsThread.Execute;
 var
   Stats: TRtmpServerStats;
 begin
-  while not Terminated do
+  while NOT Terminated do
   begin
     RtmpSleepMS(1000);
-    if Terminated or (FServer = nil) then
+    if Terminated OR (FServer = nil) then
       Break;
 
-    Stats := FServer.GetStats;
+    Stats:=FServer.GetStats;
     WriteLn(Format(
       '[STATS] active=%d peakActive=%d publishes=%d peakPublishes=%d totalSessions=%d bytes=%d packets=%d bitrate=%.0f avg=%.0f idleMS=%d lagMS=%d maxLagMS=%d dropped=%d warns=%d errors=%d protoErr=%d transportErr=%d sessionErr=%d bufferPackets=%d bufferBytes=%d bufferWindowMS=%d evicted=%d evictPkt=%d evictByte=%d evictAge=%d retained=%d retainedBytes=%d',
       [Stats.ActiveSessions, Stats.PeakActiveSessions, Stats.ActivePublishes,
@@ -89,24 +89,24 @@ begin
        Stats.Buffer.EvictedByAgeLimit, Stats.Buffer.RetainedPackets,
        Stats.Buffer.RetainedBytes]));
 
-    if (Stats.LastWarningCategory <> '') and
-      ((Stats.LastWarningCategory <> FLastWarningCategory) or
+    if (Stats.LastWarningCategory <> '') AND
+      ((Stats.LastWarningCategory <> FLastWarningCategory) OR
        (Stats.LastWarningMessage <> FLastWarningMessage)) then
     begin
       WriteLn(Format('[LASTWARN] %s: %s',
         [Stats.LastWarningCategory, Stats.LastWarningMessage]));
-      FLastWarningCategory := Stats.LastWarningCategory;
-      FLastWarningMessage := Stats.LastWarningMessage;
+      FLastWarningCategory:=Stats.LastWarningCategory;
+      FLastWarningMessage:=Stats.LastWarningMessage;
     end;
 
-    if (Stats.LastErrorCategory <> '') and
-      ((Stats.LastErrorCategory <> FLastErrorCategory) or
+    if (Stats.LastErrorCategory <> '') AND
+      ((Stats.LastErrorCategory <> FLastErrorCategory) OR
        (Stats.LastErrorMessage <> FLastErrorMessage)) then
     begin
       WriteLn(Format('[LASTERR] %s: %s',
         [Stats.LastErrorCategory, Stats.LastErrorMessage]));
-      FLastErrorCategory := Stats.LastErrorCategory;
-      FLastErrorMessage := Stats.LastErrorMessage;
+      FLastErrorCategory:=Stats.LastErrorCategory;
+      FLastErrorMessage:=Stats.LastErrorMessage;
     end;
   end;
 end;
@@ -114,17 +114,17 @@ end;
 constructor TConsoleApp.Create;
 begin
   inherited Create;
-  FLogLevel := llInfo;
-  FPacketLogEvery := 0;
-  FPacketCount := 0;
-  FServer := TRtmpServer.Create;
-  FStatsThread := nil;
-  FServer.LogSink.OnLog := HandleLog;
-  FServer.OnClientConnected := HandleClientConnected;
-  FServer.OnClientDisconnected := HandleClientDisconnected;
-  FServer.OnPublishStarted := HandlePublishStarted;
-  FServer.OnPublishStopped := HandlePublishStopped;
-  FServer.OnData := HandleData;
+  FLogLevel:=llInfo;
+  FPacketLogEvery:=0;
+  FPacketCount:=0;
+  FServer:=TRtmpServer.Create;
+  FStatsThread:=nil;
+  FServer.LogSink.OnLog:=HandleLog;
+  FServer.OnClientConnected:=HandleClientConnected;
+  FServer.OnClientDisconnected:=HandleClientDisconnected;
+  FServer.OnPublishStarted:=HandlePublishStarted;
+  FServer.OnPublishStopped:=HandlePublishStopped;
+  FServer.OnData:=HandleData;
 end;
 
 destructor TConsoleApp.Destroy;
@@ -156,10 +156,10 @@ procedure TConsoleApp.HandleData(Sender: TObject; Session: TRtmpServerSession;
 begin
   Inc(FPacketCount);
 
-  if (FLogLevel <= llInfo) and
-    ((FLogLevel = llDebug) or Packet.HasFlag(pfIsCodecConfig) or
-    Packet.HasFlag(pfIsKeyframe) or ((FPacketLogEvery > 0) and
-    ((FPacketCount mod UInt64(FPacketLogEvery)) = 0))) then
+  if (FLogLevel <= llInfo) AND
+    ((FLogLevel = llDebug) OR Packet.HasFlag(pfIsCodecConfig) OR
+    Packet.HasFlag(pfIsKeyframe) OR ((FPacketLogEvery > 0) AND
+    ((FPacketCount MOD UInt64(FPacketLogEvery)) = 0))) then
     WriteLn(Format('Packet stream=%s type=%d ts=%d size=%d keyframe=%s config=%s',
       [Session.StreamName, Ord(Packet.MessageType), Packet.Timestamp,
        Packet.PayloadSize, BoolToStr(Packet.HasFlag(pfIsKeyframe), True),
@@ -197,46 +197,46 @@ var
   Port: Word;
   SampleArg: string;
 begin
-  Port := 1935;
-  LogMode := 'info';
+  Port:=1935;
+  LogMode:='info';
   if ParamCount >= 1 then
-    Port := StrToIntDef(ParamStr(1), Port);
+    Port:=StrToIntDef(ParamStr(1), Port);
   if ParamCount >= 2 then
-    LogMode := LowerCase(Trim(ParamStr(2)));
+    LogMode:=LowerCase(Trim(ParamStr(2)));
   if ParamCount >= 3 then
-    SampleArg := Trim(ParamStr(3))
+    SampleArg:=Trim(ParamStr(3))
   else
-    SampleArg := '';
+    SampleArg:='';
 
   if LogMode = 'debug' then
   begin
-    FLogLevel := llDebug;
-    FPacketLogEvery := 1;
+    FLogLevel:=llDebug;
+    FPacketLogEvery:=1;
   end
   else if LogMode = 'info' then
-    FLogLevel := llInfo
+    FLogLevel:=llInfo
   else if LogMode = 'warn' then
-    FLogLevel := llWarning
+    FLogLevel:=llWarning
   else if LogMode = 'error' then
-    FLogLevel := llError
+    FLogLevel:=llError
   else
     raise Exception.CreateFmt(
       'Unknown log mode "%s". Use debug, info, warn, or error.',
       [LogMode]);
 
   if SampleArg <> '' then
-    FPacketLogEvery := StrToIntDef(SampleArg, FPacketLogEvery);
+    FPacketLogEvery:=StrToIntDef(SampleArg, FPacketLogEvery);
 
-  Config := DefaultRtmpServerConfig;
-  Config.BindAddress := '0.0.0.0';
-  Config.Port := Port;
-  Config.BufferMaxPackets := 1024;
-  Config.BufferMaxBytes := 16 * 1024 * 1024;
-  Config.BufferMaxDurationMS := 3000;
-  FServer.Config := Config;
-  FServer.MinLogLevel := FLogLevel;
+  Config:=DefaultRtmpServerConfig;
+  Config.BindAddress:='0.0.0.0';
+  Config.Port:=Port;
+  Config.BufferMaxPackets:=1024;
+  Config.BufferMaxBytes:=16 * 1024 * 1024;
+  Config.BufferMaxDurationMS:=3000;
+  FServer.Config:=Config;
+  FServer.MinLogLevel:=FLogLevel;
   FServer.Start;
-  FStatsThread := TStatsThread.Create(FServer);
+  FStatsThread:=TStatsThread.Create(FServer);
   FStatsThread.Start;
 
   WriteLn(Format('Listening on rtmp://127.0.0.1:%d/live/test', [Port]));
@@ -255,7 +255,7 @@ var
   App: TConsoleApp;
 
 begin
-  App := TConsoleApp.Create;
+  App:=TConsoleApp.Create;
   try
     App.Run;
   finally

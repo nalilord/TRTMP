@@ -12,11 +12,11 @@ uses
   {$ENDIF}
   {$ENDIF}
   SysUtils,
-  RtmpBuffer,
-  RtmpCompat,
-  RtmpLiveSourceSwitcher,
-  RtmpPacket,
-  RtmpTypes;
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Pipeline.Switcher,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Types;
 
 type
   TLiveSourceSwitcherSmoke = class
@@ -42,24 +42,24 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 constructor TLiveSourceSwitcherSmoke.Create;
 begin
   inherited Create;
-  FBuffer := TRtmpCircularBuffer.Create(128, 1024 * 1024, 5000);
-  FSwitcher := TRtmpLiveSourceSwitcher.Create(FBuffer);
-  FSwitcher.IdleTimeoutMS := 40;
-  FSwitcher.EvaluationIntervalMS := 10;
-  FSwitcher.OnActiveSourceChanged := HandleSourceChanged;
+  FBuffer:=TRtmpCircularBuffer.Create(128, 1024 * 1024, 5000);
+  FSwitcher:=TRtmpLiveSourceSwitcher.Create(FBuffer);
+  FSwitcher.IdleTimeoutMS:=40;
+  FSwitcher.EvaluationIntervalMS:=10;
+  FSwitcher.OnActiveSourceChanged:=HandleSourceChanged;
   FSwitcher.RegisterSource('primary', 10);
   FSwitcher.RegisterSource('fallback', 20);
-  FSwitchCount := 0;
-  FLastReason := '';
+  FSwitchCount:=0;
+  FLastReason:='';
 end;
 
 destructor TLiveSourceSwitcherSmoke.Destroy;
@@ -72,7 +72,7 @@ end;
 procedure TLiveSourceSwitcherSmoke.AssertTrue(const AMessage: string;
   AValue: Boolean);
 begin
-  if not AValue then
+  if NOT AValue then
     raise Exception.Create(AMessage);
 end;
 
@@ -80,7 +80,7 @@ procedure TLiveSourceSwitcherSmoke.HandleSourceChanged(Sender: TObject;
   const APreviousSourceID, ANewSourceID, AReason: string);
 begin
   Inc(FSwitchCount);
-  FLastReason := AReason;
+  FLastReason:=AReason;
 end;
 
 procedure TLiveSourceSwitcherSmoke.NotePacket(const ASourceID: string;
@@ -89,7 +89,7 @@ procedure TLiveSourceSwitcherSmoke.NotePacket(const ASourceID: string;
 var
   Packet: TRtmpPacket;
 begin
-  Packet := TRtmpPacket.Create(AMessageType, ATimestamp, 0, 1, AChunkStreamID,
+  Packet:=TRtmpPacket.Create(AMessageType, ATimestamp, 0, 1, AChunkStreamID,
     TRtmpSharedPayload.Create(APayload), AFlags, ASequenceNo);
   try
     FSwitcher.NoteSourcePacket(ASourceID, Packet);
@@ -112,7 +112,7 @@ begin
   NotePacket('fallback', mtVideo, 80, 6, Bytes([$27, $01]), [pfIsVideo], 6);
 
   RtmpSleepMS(20);
-  Stats := FSwitcher.GetStats;
+  Stats:=FSwitcher.GetStats;
   AssertTrue('expected fallback to become active',
     SameText(Stats.ActiveSourceID, 'fallback'));
   AssertTrue('expected fallback bootstrap packets to be emitted',
@@ -127,7 +127,7 @@ begin
   NotePacket('primary', mtVideo, 100, 6, Bytes([$27, $01]), [pfIsVideo], 6);
 
   RtmpSleepMS(20);
-  Stats := FSwitcher.GetStats;
+  Stats:=FSwitcher.GetStats;
   AssertTrue('expected primary to preempt fallback',
     SameText(Stats.ActiveSourceID, 'primary'));
   AssertTrue('expected at least two source switches', Stats.SwitchCount >= 2);
@@ -139,15 +139,15 @@ begin
   NotePacket('fallback', mtVideo, 240, 10, Bytes([$17, $01]), [pfIsVideo, pfIsKeyframe], 6);
 
   RtmpSleepMS(20);
-  Stats := FSwitcher.GetStats;
+  Stats:=FSwitcher.GetStats;
   AssertTrue('expected fallback to resume after primary idle timeout',
     SameText(Stats.ActiveSourceID, 'fallback'));
   AssertTrue('expected failover callback after fallback resumed',
-    (FLastReason = 'idle-timeout') or (FLastReason = 'activate'));
+    (FLastReason = 'idle-timeout') OR (FLastReason = 'activate'));
   AssertTrue('expected idle timeout counter to advance',
     Stats.IdleTimeoutCount >= 1);
 
-  Packets := FBuffer.GetSnapshot;
+  Packets:=FBuffer.GetSnapshot;
   AssertTrue('expected output buffer to contain forwarded packets',
     Length(Packets) >= 10);
   AssertTrue('expected monotonic output timestamps',
@@ -166,7 +166,7 @@ var
   Smoke: TLiveSourceSwitcherSmoke;
 
 begin
-  Smoke := TLiveSourceSwitcherSmoke.Create;
+  Smoke:=TLiveSourceSwitcherSmoke.Create;
   try
     Smoke.Run;
   finally

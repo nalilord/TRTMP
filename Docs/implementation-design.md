@@ -42,81 +42,105 @@ Supporting external trees:
 
 ## Core Units
 
-### `RtmpCompat`
+All units follow the protocol-aware namespace policy documented in
+[Unit Namespaces](unit-namespaces.md).
+
+### `TRTMP.Core.Compat`
 
 - compiler/runtime bridge helpers
 - timing helpers
 - conditional portability shims
 
-### `RtmpTypes`
+### `TRTMP.RTMP.Types`
 
 - message types
 - flags
 - configs
 - immutable stat snapshots
 
-### `RtmpBytes`
+### `TRTMP.Core.Bytes`
 
 - endian-safe RTMP/AMF binary helpers
 - 24-bit integer support
 - writer helpers for hot-path serialization
 
-### `RtmpAmf0`
+### `TRTMP.RTMP.Protocol.AMF0`
 
 - minimal AMF0 value model
 - command/data encode/decode helpers
 
-### `RtmpCommand`
+### `TRTMP.RTMP.Protocol.Command`
 
 - parsed command helpers for `connect`, `createStream`, `publish`,
   `releaseStream`, and `FCPublish`
 
-### `RtmpTransport` / `RtmpTransportNative`
+### `TRTMP.Transport` / `TRTMP.Transport.Native`
 
 - replaceable transport boundary
 - native socket backend for Windows/Unix-style environments
 
-### `RtmpPacket`
+### `TRTMP.Transport.TLS` / `TRTMP.Transport.Platform`
+
+- provider-neutral TLS client/listener options
+- certificate, CA, SNI, peer-verification, and minimum-version policy
+- automatic Schannel selection on Windows and system OpenSSL selection on Unix
+- secure transport dispatch without coupling the RTMP protocol units to a TLS
+  implementation
+
+### `TRTMP.Transport.TLS.SChannel`
+
+- native Windows Schannel/SSPI transport without third-party DLLs
+- PFX/P12 server and optional client identities
+- Windows trust-store validation and TLS 1.2/1.3 policy
+
+### `TRTMP.Transport.TLS.OpenSSL`
+
+- dynamically loaded system OpenSSL transport for Unix
+- PEM identities, encrypted PEM keys, system/custom trust, SNI, and hostname/IP
+  validation
+- optional client certificates and server-side mutual TLS
+
+### `TRTMP.RTMP.Media.Packet`
 
 - normalized RTMP message/media packet object
 - shared payload ownership
 
-### `RtmpBuffer`
+### `TRTMP.RTMP.Media.Buffer`
 
 - bounded ring buffer
 - packet, byte, and window limits
 - retained metadata/audio-config/video-config/keyframe bootstrap state
 
-### `RtmpStats`
+### `TRTMP.RTMP.Media.Stats`
 
 - cumulative and live counters
 - warning/error classification
 - ingest-oriented latency diagnostics
 
-### `RtmpAnalyzer`
+### `TRTMP.RTMP.Media.Analyzer`
 
 - packet-level inspection
 - bitrate, FPS, jitter, drift
 - AAC/AVC config parsing for real stream properties
 
-### `RtmpProtocol`
+### `TRTMP.RTMP.Protocol.Core`
 
 - handshake helpers
 - chunk header parse/write logic
 - message type mapping
 
-### `RtmpChunkReassembler`
+### `TRTMP.RTMP.Protocol.Chunk`
 
 - inbound chunk-stream state
 - full message reconstruction
 - truncated/invalid-sequence handling
 
-### `RtmpFlv`
+### `TRTMP.RTMP.Protocol.FLV`
 
 - FLV tag interpretation
 - audio/video/config/keyframe classification
 
-### `RtmpServerSession` / `RtmpServer`
+### `TRTMP.RTMP.Server.Session` / `TRTMP.RTMP.Server`
 
 - ingest workflow
 - session lifecycle
@@ -124,24 +148,30 @@ Supporting external trees:
 - packet dispatch
 - server-side stats/logging
 
-### `RtmpClient`
+### `TRTMP.RTMP.Client`
 
 - outbound RTMP publish
 - reconnect/backoff
 - bootstrap replay
 - relay timestamp modes
 
+### `TRTMP.RTMP.Auth`
+
+- application-supplied connect and publish authorization policy
+- normalized peer/app/stream contexts
+- fail-closed decisions and query-parameter helpers
+
 ## Optional Decode / Preview Layer
 
 These units are opt-in and intentionally separated from the core RTMP path:
 
-- `RtmpDecoder`
-- `RtmpFFmpeg`
-- `RtmpFFmpegApi`
-- `RtmpDecoderFFmpeg`
-- `RtmpFrameConvertFFmpeg`
-- `RtmpPreview`
-- `RtmpPreviewSfml`
+- `TRTMP.RTMP.Decode`
+- `TRTMP.FFmpeg`
+- `TRTMP.FFmpeg.API`
+- `TRTMP.RTMP.Decode.FFmpeg`
+- `TRTMP.FFmpeg.FrameConvert`
+- `TRTMP.RTMP.Preview`
+- `TRTMP.RTMP.Preview.SFML`
 
 Design rules:
 

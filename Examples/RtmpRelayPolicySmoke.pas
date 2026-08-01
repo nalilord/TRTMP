@@ -12,10 +12,10 @@ uses
   {$ENDIF}
   {$ENDIF}
   SysUtils,
-  RtmpBuffer,
-  RtmpPacket,
-  RtmpPipeline,
-  RtmpTypes;
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Pipeline,
+  TRTMP.RTMP.Types;
 
 type
   TRelayPolicySmoke = class
@@ -42,10 +42,10 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 constructor TRelayPolicySmoke.Create;
@@ -53,26 +53,26 @@ var
   Policy: TRtmpRelayPolicy;
 begin
   inherited Create;
-  FAudioBuffer := TRtmpCircularBuffer.Create(64, 1024 * 1024, 5000);
-  FAudioPolicy := TRtmpRelayPolicyNode.Create;
-  FAudioSink := TRtmpBufferSink.Create(FAudioBuffer);
-  FRoot := TRtmpPacketTeeNode.Create;
-  FVideoBuffer := TRtmpCircularBuffer.Create(64, 1024 * 1024, 5000);
-  FVideoPolicy := TRtmpRelayPolicyNode.Create;
-  FVideoSink := TRtmpBufferSink.Create(FVideoBuffer);
+  FAudioBuffer:=TRtmpCircularBuffer.Create(64, 1024 * 1024, 5000);
+  FAudioPolicy:=TRtmpRelayPolicyNode.Create;
+  FAudioSink:=TRtmpBufferSink.Create(FAudioBuffer);
+  FRoot:=TRtmpPacketTeeNode.Create;
+  FVideoBuffer:=TRtmpCircularBuffer.Create(64, 1024 * 1024, 5000);
+  FVideoPolicy:=TRtmpRelayPolicyNode.Create;
+  FVideoSink:=TRtmpBufferSink.Create(FVideoBuffer);
 
-  Policy := TRtmpRelayPolicy.CreateDefault;
-  Policy.AllowMetadata := False;
-  Policy.AllowAudio := True;
-  Policy.AllowVideo := False;
-  FAudioPolicy.Policy := Policy;
+  Policy:=TRtmpRelayPolicy.CreateDefault;
+  Policy.AllowMetadata:=False;
+  Policy.AllowAudio:=True;
+  Policy.AllowVideo:=False;
+  FAudioPolicy.Policy:=Policy;
 
-  Policy := TRtmpRelayPolicy.CreateDefault;
-  Policy.AllowMetadata := True;
-  Policy.AllowAudio := False;
-  Policy.AllowVideo := True;
-  Policy.WaitForKeyframe := True;
-  FVideoPolicy.Policy := Policy;
+  Policy:=TRtmpRelayPolicy.CreateDefault;
+  Policy.AllowMetadata:=True;
+  Policy.AllowAudio:=False;
+  Policy.AllowVideo:=True;
+  Policy.WaitForKeyframe:=True;
+  FVideoPolicy.Policy:=Policy;
 
   FRoot.AddSink(FAudioPolicy);
   FRoot.AddSink(FVideoPolicy);
@@ -94,7 +94,7 @@ end;
 
 procedure TRelayPolicySmoke.AssertTrue(const AMessage: string; AValue: Boolean);
 begin
-  if not AValue then
+  if NOT AValue then
     raise Exception.Create(AMessage);
 end;
 
@@ -105,7 +105,7 @@ procedure TRelayPolicySmoke.FeedPacket(ARoot: TRtmpPacketTeeNode;
 var
   Packet: TRtmpPacket;
 begin
-  Packet := TRtmpPacket.Create(AMessageType, ATimestamp, 0, 1, AChunkStreamID,
+  Packet:=TRtmpPacket.Create(AMessageType, ATimestamp, 0, 1, AChunkStreamID,
     TRtmpSharedPayload.Create(APayload), AFlags, ASequenceNo);
   try
     ARoot.HandlePacket(ASourceID, Packet);
@@ -133,12 +133,12 @@ begin
     [pfIsVideo, pfIsKeyframe], 6);
   FRoot.HandleStreamStopped('program', 'live/test');
 
-  AudioPackets := FAudioBuffer.GetSnapshot;
-  VideoPackets := FVideoBuffer.GetSnapshot;
+  AudioPackets:=FAudioBuffer.GetSnapshot;
+  VideoPackets:=FVideoBuffer.GetSnapshot;
 
   AssertTrue('audio branch should only contain audio packets', Length(AudioPackets) = 2);
   AssertTrue('audio config packet should be first', AudioPackets[0].HasFlag(pfIsCodecConfig));
-  AssertTrue('audio media packet should be second', not AudioPackets[1].HasFlag(pfIsCodecConfig));
+  AssertTrue('audio media packet should be second', NOT AudioPackets[1].HasFlag(pfIsCodecConfig));
 
   AssertTrue('video branch should keep metadata and wait for keyframe', Length(VideoPackets) = 3);
   AssertTrue('metadata should be forwarded', VideoPackets[0].HasFlag(pfIsMetadata));
@@ -157,7 +157,7 @@ var
   Smoke: TRelayPolicySmoke;
 
 begin
-  Smoke := TRelayPolicySmoke.Create;
+  Smoke:=TRelayPolicySmoke.Create;
   try
     Smoke.Run;
   finally

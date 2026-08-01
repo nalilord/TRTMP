@@ -12,10 +12,10 @@ uses
   {$ENDIF}
   {$ENDIF}
   SysUtils,
-  RtmpBuffer,
-  RtmpPacket,
-  RtmpPipeline,
-  RtmpTypes;
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Pipeline,
+  TRTMP.RTMP.Types;
 
 type
   TPipelineSmoke = class
@@ -40,25 +40,25 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 constructor TPipelineSmoke.Create;
 begin
   inherited Create;
-  FBuffer := TRtmpCircularBuffer.Create(128, 1024 * 1024, 5000);
-  FBufferSink := TRtmpBufferSink.Create(FBuffer);
-  FTeeNode := TRtmpPacketTeeNode.Create;
-  FStatsNode := TRtmpPacketStatsNode.Create;
-  FSwitcherNode := TRtmpLiveSourceSwitcherNode.Create;
+  FBuffer:=TRtmpCircularBuffer.Create(128, 1024 * 1024, 5000);
+  FBufferSink:=TRtmpBufferSink.Create(FBuffer);
+  FTeeNode:=TRtmpPacketTeeNode.Create;
+  FStatsNode:=TRtmpPacketStatsNode.Create;
+  FSwitcherNode:=TRtmpLiveSourceSwitcherNode.Create;
 
   FSwitcherNode.Switcher.RegisterSource('primary', 10);
   FSwitcherNode.Switcher.RegisterSource('backup', 20);
-  FSwitcherNode.Switcher.IdleTimeoutMS := 40;
-  FSwitcherNode.Switcher.EvaluationIntervalMS := 10;
+  FSwitcherNode.Switcher.IdleTimeoutMS:=40;
+  FSwitcherNode.Switcher.EvaluationIntervalMS:=10;
 
   FSwitcherNode.AddSink(FStatsNode);
   FStatsNode.AddSink(FTeeNode);
@@ -77,7 +77,7 @@ end;
 
 procedure TPipelineSmoke.AssertTrue(const AMessage: string; AValue: Boolean);
 begin
-  if not AValue then
+  if NOT AValue then
     raise Exception.Create(AMessage);
 end;
 
@@ -87,7 +87,7 @@ procedure TPipelineSmoke.FeedPacket(const ASourceID: string;
 var
   Packet: TRtmpPacket;
 begin
-  Packet := TRtmpPacket.Create(AMessageType, ATimestamp, 0, 1, AChunkStreamID,
+  Packet:=TRtmpPacket.Create(AMessageType, ATimestamp, 0, 1, AChunkStreamID,
     TRtmpSharedPayload.Create(APayload), AFlags, ASequenceNo);
   try
     FSwitcherNode.HandlePacket(ASourceID, Packet);
@@ -121,8 +121,8 @@ begin
   FeedPacket('backup', mtVideo, 200, 8, Bytes([$17, $00]), [pfIsVideo, pfIsCodecConfig], 6);
   FeedPacket('backup', mtVideo, 240, 9, Bytes([$17, $01]), [pfIsVideo, pfIsKeyframe], 6);
 
-  Stats := FStatsNode.GetStats;
-  OutputPackets := FBuffer.GetSnapshot;
+  Stats:=FStatsNode.GetStats;
+  OutputPackets:=FBuffer.GetSnapshot;
 
   AssertTrue('expected pipeline to count stream starts', Stats.StreamStarts >= 3);
   AssertTrue('expected pipeline to count at least one stop', Stats.StreamStops >= 1);
@@ -145,7 +145,7 @@ var
   Smoke: TPipelineSmoke;
 
 begin
-  Smoke := TPipelineSmoke.Create;
+  Smoke:=TPipelineSmoke.Create;
   try
     Smoke.Run;
   finally

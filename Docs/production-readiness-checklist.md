@@ -21,7 +21,9 @@ low-latency use.
 - [x] Excessive inbound chunk-stream state creation is rejected.
 - [x] Session teardown always releases the server slot.
 - [x] Known allocation and buffering hazards are capped by protocol and buffer limits.
-- [ ] No unbounded memory-growth path appears in renewed long ingest runs.
+- [x] No unbounded memory-growth path appears in renewed long ingest runs.
+  The 2026-08-01 five-minute automated run completed with 2,688 KiB baseline
+  RSS, 4,356 KiB peak RSS, and 1,668 KiB growth.
 - [x] Buffer limits are applied at startup and visible in runtime stats.
 - [x] Buffer eviction under pressure is observable and predictable.
 
@@ -30,13 +32,15 @@ low-latency use.
 - [x] The ingest path does not block on avoidable copies in the hot path.
 - [x] Packet buffering policy is explicitly chosen for live-display latency, not only relay safety.
 - [x] A sustained ingest run under a deliberately small buffer budget remains stable.
-- [ ] Current bitrate reflects live traffic rather than only cumulative averages.
+- [x] Current bitrate reflects live traffic rather than only cumulative averages.
 - [x] Debug logging can be enabled for diagnosis without being required for normal operation.
 
 ## Interop Coverage
 
 - [ ] OBS publish remains stable over multi-minute runs.
-- [ ] FFmpeg 8.1 publish remains stable over multi-minute runs.
+- [x] FFmpeg 8.1 publish remains stable over multi-minute runs.
+  This is automated by `Tests/ffmpeg-ingest-soak.sh`; release runs should use
+  `DURATION=300` or longer.
 - [x] The ingest server tolerates optional stream-control commands such as `releaseStream` and `FCPublish`.
 - [x] Restream client still interoperates with the hardened server path.
 
@@ -45,7 +49,7 @@ low-latency use.
 - [x] Session errors, protocol errors, and admission rejections are distinguishable in logs and stats.
 - [x] Buffer occupancy, retention, and eviction numbers are visible during live runs.
 - [x] Latency-oriented ingest counters have deterministic coverage.
-- [ ] Stream analyzer snapshots are available when enabled and absent when disabled.
+- [x] Stream analyzer snapshots are available when enabled and absent when disabled.
 - [x] The runtime can be exercised with a reproducible local publisher command.
 
 ## Exit Rule

@@ -13,18 +13,18 @@ uses
   {$ENDIF}
   Classes,
   SysUtils,
-  RtmpAmf0,
-  RtmpCompat,
-  RtmpBuffer,
-  RtmpBytes,
-  RtmpChunkReassembler,
-  RtmpClient,
-  RtmpCommand,
-  RtmpPacket,
-  RtmpProtocol,
-  RtmpTransport,
-  RtmpTransportNative,
-  RtmpTypes;
+  TRTMP.RTMP.Protocol.AMF0,
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.Core.Bytes,
+  TRTMP.RTMP.Protocol.Chunk,
+  TRTMP.RTMP.Client,
+  TRTMP.RTMP.Protocol.Command,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Protocol.Core,
+  TRTMP.Transport,
+  TRTMP.Transport.Native,
+  TRTMP.RTMP.Types;
 
 type
   TRejectServerThread = class(TThread)
@@ -91,26 +91,26 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 constructor TRejectServerThread.Create(APort: Word);
 begin
   inherited Create(True);
-  FreeOnTerminate := False;
-  FClientWindowAckCount := 0;
-  FClientWindowAckSize := 0;
-  FLastError := '';
-  FConnectionCount := 0;
-  FCreateStreamCount := 0;
-  FPublishCommandCount := 0;
-  FTransportFactory := TRtmpNativeTransportFactory.Create;
-  FListener := FTransportFactory.CreateListener(
+  FreeOnTerminate:=False;
+  FClientWindowAckCount:=0;
+  FClientWindowAckSize:=0;
+  FLastError:='';
+  FConnectionCount:=0;
+  FCreateStreamCount:=0;
+  FPublishCommandCount:=0;
+  FTransportFactory:=TRtmpNativeTransportFactory.Create;
+  FListener:=FTransportFactory.CreateListener(
     TRtmpSocketEndpoint.Create('127.0.0.1', APort), 4);
-  FRejectCount := 0;
+  FRejectCount:=0;
 end;
 
 destructor TRejectServerThread.Destroy;
@@ -125,24 +125,24 @@ var
   I: Integer;
   KeyName: string;
 begin
-  if (Length(APairs) mod 2) <> 0 then
+  if (Length(APairs) MOD 2) <> 0 then
     raise Exception.Create('BuildObject expects name/value pairs');
 
-  Result := TRtmpAmf0Object.Create;
-  I := 0;
+  Result:=TRtmpAmf0Object.Create;
+  I:=0;
   while I < Length(APairs) do
   begin
     case APairs[I].VType of
       vtAnsiString:
-        KeyName := string(AnsiString(APairs[I].VAnsiString));
+        KeyName:=string(AnsiString(APairs[I].VAnsiString));
       vtPChar:
-        KeyName := string(APairs[I].VPChar);
+        KeyName:=string(APairs[I].VPChar);
       vtChar:
-        KeyName := string(APairs[I].VChar);
+        KeyName:=string(APairs[I].VChar);
       vtString:
-        KeyName := string(APairs[I].VString^);
+        KeyName:=string(APairs[I].VString^);
       vtUnicodeString:
-        KeyName := string(UnicodeString(APairs[I].VUnicodeString));
+        KeyName:=string(UnicodeString(APairs[I].VUnicodeString));
     else
       raise Exception.Create('BuildObject key must be a string');
     end;
@@ -179,11 +179,11 @@ procedure TRejectServerThread.Execute;
 var
   Connection: IRtmpConnection;
 begin
-  while not Terminated do
+  while NOT Terminated do
   begin
     if FListener = nil then
       Break;
-    Connection := FListener.Accept(200);
+    Connection:=FListener.Accept(200);
     if Connection = nil then
       Continue;
     Inc(FConnectionCount);
@@ -192,7 +192,7 @@ begin
       RunOneSession(Connection);
     except
       on E: Exception do
-        FLastError := E.Message;
+        FLastError:=E.Message;
     end;
   end;
 end;
@@ -203,17 +203,17 @@ var
   Offset: Integer;
   Received: Integer;
 begin
-  Result := False;
-  Offset := 0;
+  Result:=False;
+  Offset:=0;
   SetLength(ABytes, ACount);
   while Offset < ACount do
   begin
-    Received := AConnection.Receive(ABytes[Offset], ACount - Offset, ATimeoutMS);
+    Received:=AConnection.Receive(ABytes[Offset], ACount - Offset, ATimeoutMS);
     if Received <= 0 then
       Exit(False);
     Inc(Offset, Received);
   end;
-  Result := True;
+  Result:=True;
 end;
 
 function TRejectServerThread.ReadOneOrMoreBytes(const AConnection: IRtmpConnection;
@@ -222,14 +222,14 @@ var
   Buffer: array[0..8191] of Byte;
   Received: Integer;
 begin
-  Result := False;
-  ABytes := nil;
-  Received := AConnection.Receive(Buffer, SizeOf(Buffer), ATimeoutMS);
+  Result:=False;
+  ABytes:=nil;
+  Received:=AConnection.Receive(Buffer, SizeOf(Buffer), ATimeoutMS);
   if Received <= 0 then
     Exit(False);
   SetLength(ABytes, Received);
   Move(Buffer[0], ABytes[0], Received);
-  Result := True;
+  Result:=True;
 end;
 
 procedure TRejectServerThread.RunOneSession(const AConnection: IRtmpConnection);
@@ -244,34 +244,34 @@ var
   S0S1S2: TBytes;
   TransactionID: Double;
 begin
-  if not ReadExact(AConnection, 1 + RTMP_HANDSHAKE_SIZE, 3000, C0C1) then
+  if NOT ReadExact(AConnection, 1 + RTMP_HANDSHAKE_SIZE, 3000, C0C1) then
     Exit;
   if C0C1[0] <> RTMP_VERSION then
     Exit;
 
   SetLength(BytesIn, RTMP_HANDSHAKE_SIZE);
   Move(C0C1[1], BytesIn[0], RTMP_HANDSHAKE_SIZE);
-  S0S1S2 := TRtmpHandshake.BuildS0S1S2(BytesIn);
+  S0S1S2:=TRtmpHandshake.BuildS0S1S2(BytesIn);
   SendRawBytes(AConnection, S0S1S2);
-  if not ReadExact(AConnection, RTMP_HANDSHAKE_SIZE, 3000, C2) then
+  if NOT ReadExact(AConnection, RTMP_HANDSHAKE_SIZE, 3000, C2) then
     Exit;
 
   SendProtocolDefaults(AConnection);
-  Reassembler := TRtmpChunkReassembler.Create(4096);
+  Reassembler:=TRtmpChunkReassembler.Create(4096);
   try
-    while not Terminated do
+    while NOT Terminated do
     begin
-      if not ReadOneOrMoreBytes(AConnection, 3000, BytesIn) then
+      if NOT ReadOneOrMoreBytes(AConnection, 3000, BytesIn) then
         Break;
       Reassembler.AppendBytes(BytesIn);
       while Reassembler.TryReadMessage(MessageOut) do
       begin
         if MessageOut.MessageType = mtSetChunkSize then
         begin
-          Reader := TRtmpByteReader.Create(MessageOut.Payload);
+          Reader:=TRtmpByteReader.Create(MessageOut.Payload);
           try
             if Reader.Remaining >= 4 then
-              Reassembler.InChunkSize := Integer(Reader.ReadUInt32BE);
+              Reassembler.InChunkSize:=Integer(Reader.ReadUInt32BE);
           finally
             Reader.Free;
           end;
@@ -280,12 +280,12 @@ begin
 
         if MessageOut.MessageType = mtWindowAckSize then
         begin
-          Reader := TRtmpByteReader.Create(MessageOut.Payload);
+          Reader:=TRtmpByteReader.Create(MessageOut.Payload);
           try
             if Reader.Remaining >= 4 then
             begin
               Inc(FClientWindowAckCount);
-              FClientWindowAckSize := Reader.ReadUInt32BE;
+              FClientWindowAckSize:=Reader.ReadUInt32BE;
             end;
           finally
             Reader.Free;
@@ -296,12 +296,12 @@ begin
         if MessageOut.MessageType <> mtCommandAMF0 then
           Continue;
 
-        Command := TRtmpCommandMessage.Create(MessageOut.Payload);
+        Command:=TRtmpCommandMessage.Create(MessageOut.Payload);
         try
-          TransactionID := Command.TransactionID;
+          TransactionID:=Command.TransactionID;
           if Command.IsCommand('connect') then
             SendConnectResult(AConnection, TransactionID)
-          else if Command.IsCommand('releaseStream') or Command.IsCommand('FCPublish') then
+          else if Command.IsCommand('releaseStream') OR Command.IsCommand('FCPublish') then
             SendOptionalCommandError(AConnection, TransactionID)
           else if Command.IsCommand('createStream') then
           begin
@@ -332,10 +332,10 @@ var
   Offset: Integer;
   Sent: Integer;
 begin
-  Offset := 0;
+  Offset:=0;
   while Offset < Length(ABytes) do
   begin
-    Sent := AConnection.Send(ABytes[Offset], Length(ABytes) - Offset, 3000);
+    Sent:=AConnection.Send(ABytes[Offset], Length(ABytes) - Offset, 3000);
     if Sent <= 0 then
       raise Exception.Create('Reject test server failed to send bytes');
     Inc(Offset, Sent);
@@ -350,20 +350,20 @@ var
   PayloadOut: TBytes;
   Writer: TRtmpByteWriter;
 begin
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType0;
-  Header.Timestamp := ATimestamp;
-  Header.MessageLength := Length(APayload);
-  Header.MessageTypeID := AMessageTypeID;
-  Header.MessageStreamID := AMessageStreamID;
-  Header.HasExtendedTimestamp := ATimestamp >= RTMP_TIMESTAMP_EXTENDED;
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType0;
+  Header.Timestamp:=ATimestamp;
+  Header.MessageLength:=Length(APayload);
+  Header.MessageTypeID:=AMessageTypeID;
+  Header.MessageStreamID:=AMessageStreamID;
+  Header.HasExtendedTimestamp:=ATimestamp >= RTMP_TIMESTAMP_EXTENDED;
 
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     WriteChunkBasicHeader(Writer, hfType0, AChunkStreamID);
     WriteChunkMessageHeader(Writer, Header);
     Writer.WriteBytes(APayload);
-    PayloadOut := Writer.ToBytes;
+    PayloadOut:=Writer.ToBytes;
   finally
     Writer.Free;
   end;
@@ -378,14 +378,14 @@ var
   Payload: TBytes;
   Values: TRtmpAmf0ValueList;
 begin
-  Values := TRtmpAmf0ValueList.Create(True);
+  Values:=TRtmpAmf0ValueList.Create(True);
   try
-    for I := 0 to High(AValues) do
-      if AValues[I] is TRtmpAmf0Value then
+    for I:=0 to High(AValues) do
+      if AValues[I] IS TRtmpAmf0Value then
         Values.AddValue(TRtmpAmf0Value(AValues[I]).Clone)
       else
         raise Exception.Create('SendCommandMessage only accepts TRtmpAmf0Value objects');
-    Payload := TRtmpAmf0.EncodeValues(Values);
+    Payload:=TRtmpAmf0.EncodeValues(Values);
   finally
     Values.Free;
   end;
@@ -400,11 +400,11 @@ var
   ServerInfo: TRtmpAmf0Object;
   StatusInfo: TRtmpAmf0Object;
 begin
-  ServerInfo := BuildObject([
+  ServerInfo:=BuildObject([
     'fmsVer', 'TRTMP-Test/0.1',
     'capabilities', 31
   ]);
-  StatusInfo := BuildObject([
+  StatusInfo:=BuildObject([
     'level', 'status',
     'code', 'NetConnection.Connect.Success',
     'description', 'Connection succeeded.'
@@ -438,7 +438,7 @@ procedure TRejectServerThread.SendOptionalCommandError(
 var
   StatusInfo: TRtmpAmf0Object;
 begin
-  StatusInfo := BuildObject([
+  StatusInfo:=BuildObject([
     'level', 'error',
     'code', 'NetConnection.Call.Failed',
     'description', 'Optional command is not supported.'
@@ -466,7 +466,7 @@ procedure TRejectServerThread.SendPublishRejected(const AConnection: IRtmpConnec
 var
   StatusInfo: TRtmpAmf0Object;
 begin
-  StatusInfo := BuildObject([
+  StatusInfo:=BuildObject([
     'level', 'error',
     'code', 'NetStream.Publish.BadName',
     'description', 'Rejected by test target'
@@ -489,10 +489,10 @@ var
   Writer: TRtmpByteWriter;
   Payload: TBytes;
 begin
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     Writer.WriteUInt32BE(AChunkSize);
-    Payload := Writer.ToBytes;
+    Payload:=Writer.ToBytes;
   finally
     Writer.Free;
   end;
@@ -505,11 +505,11 @@ var
   Writer: TRtmpByteWriter;
   Payload: TBytes;
 begin
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     Writer.WriteUInt32BE(AValue);
     Writer.WriteUInt8(ALimitType);
-    Payload := Writer.ToBytes;
+    Payload:=Writer.ToBytes;
   finally
     Writer.Free;
   end;
@@ -522,10 +522,10 @@ var
   Writer: TRtmpByteWriter;
   Payload: TBytes;
 begin
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     Writer.WriteUInt32BE(AValue);
-    Payload := Writer.ToBytes;
+    Payload:=Writer.ToBytes;
   finally
     Writer.Free;
   end;
@@ -537,17 +537,17 @@ var
   ClientConfig: TRtmpClientConfig;
 begin
   inherited Create;
-  FRejectServer := TRejectServerThread.Create(1954);
+  FRejectServer:=TRejectServerThread.Create(1954);
   FRejectServer.Start;
-  FSourceBuffer := TRtmpCircularBuffer.Create(64, 2 * 1024 * 1024);
-  FClient := TRtmpClient.Create;
+  FSourceBuffer:=TRtmpCircularBuffer.Create(64, 2 * 1024 * 1024);
+  FClient:=TRtmpClient.Create;
   FClient.AttachBuffer(FSourceBuffer);
-  ClientConfig := DefaultRtmpClientConfig;
-  ClientConfig.TargetURL := 'rtmp://127.0.0.1:1954/live/test';
-  ClientConfig.OutChunkSize := 4096;
-  ClientConfig.ReconnectDelayMS := 200;
-  ClientConfig.MaxReconnectDelayMS := 400;
-  FClient.Config := ClientConfig;
+  ClientConfig:=DefaultRtmpClientConfig;
+  ClientConfig.TargetURL:='rtmp://127.0.0.1:1954/live/test';
+  ClientConfig.OutChunkSize:=4096;
+  ClientConfig.ReconnectDelayMS:=200;
+  ClientConfig.MaxReconnectDelayMS:=400;
+  FClient.Config:=ClientConfig;
 end;
 
 destructor TRejectSmokeApp.Destroy;
@@ -583,7 +583,7 @@ begin
   SeedSourceBuffer;
   FClient.Start;
   try
-    Deadline := RtmpGetTickCount64 + 2500;
+    Deadline:=RtmpGetTickCount64 + 2500;
     while RtmpGetTickCount64 < Deadline do
     begin
       if FRejectServer.RejectCount >= 2 then
@@ -594,7 +594,7 @@ begin
     FClient.Stop;
   end;
 
-  Stats := FClient.GetStats;
+  Stats:=FClient.GetStats;
   if FRejectServer.RejectCount = 0 then
     raise Exception.CreateFmt(
       'Reject smoke failed: target never rejected publish connections=%d createStream=%d publish=%d reconnects=%d lastError=%s',
@@ -623,7 +623,7 @@ var
   App: TRejectSmokeApp;
 
 begin
-  App := TRejectSmokeApp.Create;
+  App:=TRejectSmokeApp.Create;
   try
     App.Run;
   finally

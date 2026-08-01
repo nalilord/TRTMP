@@ -19,18 +19,18 @@ uses
   Contnrs,
   IniFiles,
   SysUtils,
-  RtmpBuffer,
-  RtmpCompat,
-  RtmpClient,
-  RtmpLiveSourceSwitcher,
-  RtmpPacket,
-  RtmpPipeline,
-  RtmpServer,
-  RtmpServerSession,
-  RtmpTypes
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Client,
+  TRTMP.RTMP.Pipeline.Switcher,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Pipeline,
+  TRTMP.RTMP.Server,
+  TRTMP.RTMP.Server.Session,
+  TRTMP.RTMP.Types
   {$IFDEF USE_FFMPEG}
   ,
-  RtmpMediaPipeline
+  TRTMP.RTMP.Pipeline.Media
   {$ENDIF};
 
 type
@@ -161,9 +161,9 @@ type
 function ConfigValueOrDefault(const AValue, ADefault: string): string;
 begin
   if Trim(AValue) = '' then
-    Result := ADefault
+    Result:=ADefault
   else
-    Result := AValue;
+    Result:=AValue;
 end;
 
 function ReadUInt64Value(Ini: TIniFile; const ASection, AIdent: string;
@@ -172,36 +172,36 @@ var
   Parsed: Int64;
   Value: string;
 begin
-  Value := Trim(Ini.ReadString(ASection, AIdent, ''));
+  Value:=Trim(Ini.ReadString(ASection, AIdent, ''));
   if Value = '' then
     Exit(ADefault);
 
-  if (not TryStrToInt64(Value, Parsed)) or (Parsed < 0) then
+  if (NOT TryStrToInt64(Value, Parsed)) OR (Parsed < 0) then
     raise Exception.CreateFmt('Invalid unsigned integer for %s.%s: %s',
       [ASection, AIdent, Value]);
-  Result := UInt64(Parsed);
+  Result:=UInt64(Parsed);
 end;
 
 function LogLevelName(ALevel: TRtmpLogLevel): string;
 begin
   case ALevel of
-    llDebug: Result := 'debug';
-    llInfo: Result := 'info';
-    llWarning: Result := 'warn';
-    llError: Result := 'error';
+    llDebug: Result:='debug';
+    llInfo: Result:='info';
+    llWarning: Result:='warn';
+    llError: Result:='error';
   else
-    Result := 'unknown';
+    Result:='unknown';
   end;
 end;
 
 function TimestampModeName(AMode: TRtmpTimestampMode): string;
 begin
   case AMode of
-    tmPassThrough: Result := 'pass';
-    tmRebased: Result := 'rebase';
-    tmSmoothed: Result := 'smooth';
+    tmPassThrough: Result:='pass';
+    tmRebased: Result:='rebase';
+    tmSmoothed: Result:='smooth';
   else
-    Result := 'unknown';
+    Result:='unknown';
   end;
 end;
 
@@ -210,14 +210,14 @@ end;
 constructor TSfmlPlayerThread.Create(APlayer: TNamedSfmlPlayerSink);
 begin
   inherited Create(True);
-  FreeOnTerminate := False;
-  FPlayer := APlayer;
+  FreeOnTerminate:=False;
+  FPlayer:=APlayer;
 end;
 
 procedure TSfmlPlayerThread.Execute;
 begin
   RtmpMaskFloatingPointExceptions;
-  while not Terminated and (FPlayer <> nil) and FPlayer.IsOpen do
+  while NOT Terminated AND (FPlayer <> nil) AND FPlayer.IsOpen do
   begin
     FPlayer.ProcessEvents;
     FPlayer.Render;
@@ -230,8 +230,8 @@ end;
 constructor TGraphGatewayStatsThread.Create(AApp: TGraphGatewayApp);
 begin
   inherited Create(True);
-  FreeOnTerminate := False;
-  FApp := AApp;
+  FreeOnTerminate:=False;
+  FApp:=AApp;
 end;
 
 procedure TGraphGatewayStatsThread.Execute;
@@ -249,17 +249,17 @@ var
   ServerStats: TRtmpServerStats;
   SwitcherStats: TRtmpLiveSourceSwitcherStats;
 begin
-  while not Terminated do
+  while NOT Terminated do
   begin
     RtmpSleepMS(1000);
-    if Terminated or (FApp = nil) then
+    if Terminated OR (FApp = nil) then
       Break;
 
-    Config := FApp.CurrentConfig;
-    ServerStats := FApp.ServerStats;
-    PipelineStats := FApp.FProgramStats.GetStats;
-    BufferStats := FApp.FProgramBuffer.GetStats;
-    SwitcherStats := FApp.FSourceSwitcher.Switcher.GetStats;
+    Config:=FApp.CurrentConfig;
+    ServerStats:=FApp.ServerStats;
+    PipelineStats:=FApp.FProgramStats.GetStats;
+    BufferStats:=FApp.FProgramBuffer.GetStats;
+    SwitcherStats:=FApp.FSourceSwitcher.Switcher.GetStats;
     WriteLn(Format(
       '[STATS] active=%d publishes=%d bytes=%d packets=%d bitrate=%.0f avg=%.0f idleMS=%d lagMS=%d maxLagMS=%d warns=%d errors=%d protoErr=%d transportErr=%d sessionErr=%d bufferPackets=%d bufferBytes=%d bufferWindowMS=%d evicted=%d evictPkt=%d evictByte=%d evictAge=%d retained=%d retainedBytes=%d',
       [ServerStats.ActiveSessions, ServerStats.ActivePublishes,
@@ -280,23 +280,24 @@ begin
        PipelineStats.StreamStarts, PipelineStats.StreamStops,
        BufferStats.PacketCount, BufferStats.ByteCount, BufferStats.WindowDurationMS]));
 
-    for I := 0 to FApp.FRelaySinks.Count - 1 do
+    for I:=0 to FApp.FRelaySinks.Count - 1 do
     begin
-      RelaySink := TRtmpRelaySinkNode(FApp.FRelaySinks[I]);
-      RelayClientStats := RelaySink.ClientStats;
-      RelayBufferStats := RelaySink.BufferStats;
+      RelaySink:=TRtmpRelaySinkNode(FApp.FRelaySinks[I]);
+      RelayClientStats:=RelaySink.ClientStats;
+      RelayBufferStats:=RelaySink.BufferStats;
       WriteLn(Format(
-        '[RELAY:%s] state=%d bytes=%d packets=%d bitrate=%.0f avg=%.0f reconnects=%d bufferPackets=%d bufferBytes=%d',
+        '[RELAY:%s] state=%d bytes=%d packets=%d bitrate=%.0f avg=%.0f reconnects=%d requests=%d bufferPackets=%d bufferBytes=%d',
         [RelaySink.Name, Ord(RelaySink.Client.State), RelayClientStats.BytesSent,
          RelayClientStats.PacketsSent, RelayClientStats.CurrentBitrate,
          RelayClientStats.AverageBitrate, RelayClientStats.Reconnects,
+         RelayClientStats.ReconnectRequests,
          RelayBufferStats.PacketCount, RelayBufferStats.ByteCount]));
     end;
 
 {$IFDEF USE_FFMPEG}
-    for I := 0 to FApp.FVideoDecoders.Count - 1 do
+    for I:=0 to FApp.FVideoDecoders.Count - 1 do
     begin
-      DecodeStats := TRtmpVideoDecoderNode(FApp.FVideoDecoders[I]).Stats;
+      DecodeStats:=TRtmpVideoDecoderNode(FApp.FVideoDecoders[I]).Stats;
       WriteLn(Format(
         '[DECODE:%d] source=%s stream=%s packets=%d config=%d opens=%d frames=%d submitErr=%d recvErr=%d convErr=%d size=%dx%d',
         [I + 1, DecodeStats.ActiveSourceID, DecodeStats.ActiveStreamName,
@@ -315,31 +316,31 @@ end;
 constructor TGraphGatewayApp.Create;
 begin
   inherited Create;
-  FManagedObjects := TObjectList.Create(True);
-  FPacketCount := 0;
-  FPacketParents := TStringList.Create;
-  FPacketParents.CaseSensitive := False;
-  FPacketParents.Sorted := False;
-  FPacketParents.Duplicates := dupIgnore;
-  FProgramBuffer := TRtmpCircularBuffer.Create(1024, 16 * 1024 * 1024, 3000);
-  FProgramBufferSink := TRtmpBufferSink.Create(FProgramBuffer);
-  FProgramStats := TRtmpPacketStatsNode.Create;
-  FRelaySinks := TList.Create;
-  FServer := TRtmpServer.Create;
-  FSourceSwitcher := TRtmpLiveSourceSwitcherNode.Create;
-  FStatsThread := nil;
-  FTeeNode := TRtmpPacketTeeNode.Create;
+  FManagedObjects:=TObjectList.Create(True);
+  FPacketCount:=0;
+  FPacketParents:=TStringList.Create;
+  FPacketParents.CaseSensitive:=False;
+  FPacketParents.Sorted:=False;
+  FPacketParents.Duplicates:=dupIgnore;
+  FProgramBuffer:=TRtmpCircularBuffer.Create(1024, 16 * 1024 * 1024, 3000);
+  FProgramBufferSink:=TRtmpBufferSink.Create(FProgramBuffer);
+  FProgramStats:=TRtmpPacketStatsNode.Create;
+  FRelaySinks:=TList.Create;
+  FServer:=TRtmpServer.Create;
+  FSourceSwitcher:=TRtmpLiveSourceSwitcherNode.Create;
+  FStatsThread:=nil;
+  FTeeNode:=TRtmpPacketTeeNode.Create;
 {$IFDEF USE_FFMPEG}
-  FCallbackPlayers := TList.Create;
+  FCallbackPlayers:=TList.Create;
 {$IFDEF USE_SFML}
-  FPlayerThreads := TObjectList.Create(True);
-  FSfmlPlayers := TList.Create;
+  FPlayerThreads:=TObjectList.Create(True);
+  FSfmlPlayers:=TList.Create;
 {$ENDIF}
-  FVideoDecoders := TList.Create;
-  FVideoParents := TStringList.Create;
-  FVideoParents.CaseSensitive := False;
-  FVideoParents.Sorted := False;
-  FVideoParents.Duplicates := dupIgnore;
+  FVideoDecoders:=TList.Create;
+  FVideoParents:=TStringList.Create;
+  FVideoParents.CaseSensitive:=False;
+  FVideoParents.Sorted:=False;
+  FVideoParents.Duplicates:=dupIgnore;
 {$ENDIF}
 
   FSourceSwitcher.AddSink(FProgramStats);
@@ -350,15 +351,15 @@ begin
   RegisterPacketParent('program_stats', FProgramStats);
   RegisterPacketParent('program_switcher', FSourceSwitcher);
 
-  FServer.LogSink.OnLog := HandleServerLog;
-  FServer.OnClientConnected := HandleServerClientConnected;
-  FServer.OnClientDisconnected := HandleServerClientDisconnected;
-  FServer.OnPublishStarted := HandlePublishStarted;
-  FServer.OnPublishStopped := HandlePublishStopped;
-  FServer.OnData := HandleServerData;
-  FServer.PacketSink := FSourceSwitcher;
+  FServer.LogSink.OnLog:=HandleServerLog;
+  FServer.OnClientConnected:=HandleServerClientConnected;
+  FServer.OnClientDisconnected:=HandleServerClientDisconnected;
+  FServer.OnPublishStarted:=HandlePublishStarted;
+  FServer.OnPublishStopped:=HandlePublishStopped;
+  FServer.OnData:=HandleServerData;
+  FServer.PacketSink:=FSourceSwitcher;
 
-  FSourceSwitcher.OnActiveSourceChanged := HandlePipelineSourceChanged;
+  FSourceSwitcher.OnActiveSourceChanged:=HandlePipelineSourceChanged;
 end;
 
 destructor TGraphGatewayApp.Destroy;
@@ -395,36 +396,36 @@ end;
 
 function TGraphGatewayApp.CurrentConfig: TGraphGatewayConfig;
 begin
-  Result := FConfig;
+  Result:=FConfig;
 end;
 
 function TGraphGatewayApp.ExtractStreamNameFromSourceID(const ASourceID: string): string;
 var
   SlashPos: Integer;
 begin
-  SlashPos := LastDelimiter('/', ASourceID);
+  SlashPos:=LastDelimiter('/', ASourceID);
   if SlashPos > 0 then
-    Result := Copy(ASourceID, SlashPos + 1, MaxInt)
+    Result:=Copy(ASourceID, SlashPos + 1, MaxInt)
   else
-    Result := ASourceID;
+    Result:=ASourceID;
 end;
 
 function TGraphGatewayApp.FindPacketParent(const AName: string): TRtmpPacketNode;
 var
   Index: Integer;
 begin
-  Result := nil;
-  Index := FPacketParents.IndexOf(AName);
+  Result:=nil;
+  Index:=FPacketParents.IndexOf(AName);
   if Index >= 0 then
-    Result := TRtmpPacketNode(FPacketParents.Objects[Index]);
+    Result:=TRtmpPacketNode(FPacketParents.Objects[Index]);
 end;
 
 function TGraphGatewayApp.FindRelaySinkByClient(Sender: TObject): TRtmpRelaySinkNode;
 var
   I: Integer;
 begin
-  Result := nil;
-  for I := 0 to FRelaySinks.Count - 1 do
+  Result:=nil;
+  for I:=0 to FRelaySinks.Count - 1 do
     if TRtmpRelaySinkNode(FRelaySinks[I]).Client = Sender then
       Exit(TRtmpRelaySinkNode(FRelaySinks[I]));
 end;
@@ -434,22 +435,22 @@ function TGraphGatewayApp.FindVideoParent(const AName: string): TRtmpVideoDecode
 var
   Index: Integer;
 begin
-  Result := nil;
-  Index := FVideoParents.IndexOf(AName);
+  Result:=nil;
+  Index:=FVideoParents.IndexOf(AName);
   if Index >= 0 then
-    Result := TRtmpVideoDecoderNode(FVideoParents.Objects[Index]);
+    Result:=TRtmpVideoDecoderNode(FVideoParents.Objects[Index]);
 end;
 {$ENDIF}
 
 function TGraphGatewayApp.ParseGraphBool(Ini: TIniFile; const ASection,
   AIdent: string; ADefault: Boolean): Boolean;
 begin
-  Result := Ini.ReadBool(ASection, AIdent, ADefault);
+  Result:=Ini.ReadBool(ASection, AIdent, ADefault);
 end;
 
 function TGraphGatewayApp.ParseGraphKind(const AValue: string): string;
 begin
-  Result := LowerCase(Trim(AValue));
+  Result:=LowerCase(Trim(AValue));
   if Result = '' then
     raise Exception.Create('Graph node kind must not be empty');
 end;
@@ -458,15 +459,15 @@ function TGraphGatewayApp.ParseLogLevel(const AValue: string): TRtmpLogLevel;
 var
   Value: string;
 begin
-  Value := LowerCase(Trim(AValue));
+  Value:=LowerCase(Trim(AValue));
   if (Value = 'debug') then
-    Result := llDebug
-  else if (Value = 'info') or (Value = '') then
-    Result := llInfo
-  else if (Value = 'warn') or (Value = 'warning') then
-    Result := llWarning
+    Result:=llDebug
+  else if (Value = 'info') OR (Value = '') then
+    Result:=llInfo
+  else if (Value = 'warn') OR (Value = 'warning') then
+    Result:=llWarning
   else if (Value = 'error') then
-    Result := llError
+    Result:=llError
   else
     raise Exception.CreateFmt('Unknown log level "%s"', [AValue]);
 end;
@@ -482,28 +483,28 @@ var
   ParsedValue: Integer;
   Parts: TStringList;
 begin
-  Result := ADefault;
+  Result:=ADefault;
   if Trim(AMapValue) = '' then
     Exit;
 
-  Parts := TStringList.Create;
+  Parts:=TStringList.Create;
   try
-    Parts.StrictDelimiter := True;
-    Parts.Delimiter := ',';
-    Parts.DelimitedText := AMapValue;
-    for I := 0 to Parts.Count - 1 do
+    Parts.StrictDelimiter:=True;
+    Parts.Delimiter:=',';
+    Parts.DelimitedText:=AMapValue;
+    for I:=0 to Parts.Count - 1 do
     begin
-      Entry := Trim(Parts[I]);
+      Entry:=Trim(Parts[I]);
       if Entry = '' then
         Continue;
-      PairPos := Pos('=', Entry);
+      PairPos:=Pos('=', Entry);
       if PairPos <= 1 then
         Continue;
-      NamePart := Trim(Copy(Entry, 1, PairPos - 1));
-      EntryValue := Trim(Copy(Entry, PairPos + 1, MaxInt));
-      if not SameText(NamePart, ASourceID) then
+      NamePart:=Trim(Copy(Entry, 1, PairPos - 1));
+      EntryValue:=Trim(Copy(Entry, PairPos + 1, MaxInt));
+      if NOT SameText(NamePart, ASourceID) then
         Continue;
-      if not TryStrToInt(EntryValue, ParsedValue) then
+      if NOT TryStrToInt(EntryValue, ParsedValue) then
         raise Exception.CreateFmt('Invalid pipeline priority for source "%s": %s',
           [ASourceID, EntryValue]);
       Exit(ParsedValue);
@@ -517,24 +518,24 @@ function TGraphGatewayApp.ParseTimestampMode(const AValue: string): TRtmpTimesta
 var
   Value: string;
 begin
-  Value := LowerCase(Trim(AValue));
-  if (Value = '') or (Value = 'pass') or (Value = 'passthrough') or
+  Value:=LowerCase(Trim(AValue));
+  if (Value = '') OR (Value = 'pass') OR (Value = 'passthrough') OR
     (Value = 'pass-through') then
-    Result := tmPassThrough
-  else if (Value = 'rebase') or (Value = 'rebased') then
-    Result := tmRebased
-  else if (Value = 'smooth') or (Value = 'smoothed') then
-    Result := tmSmoothed
+    Result:=tmPassThrough
+  else if (Value = 'rebase') OR (Value = 'rebased') then
+    Result:=tmRebased
+  else if (Value = 'smooth') OR (Value = 'smoothed') then
+    Result:=tmSmoothed
   else
     raise Exception.CreateFmt('Unknown timestamp mode "%s"', [AValue]);
 end;
 
 function TGraphGatewayApp.ResolveSourcePriority(const ASourceID: string): Integer;
 begin
-  Result := ParsePriorityMapValue(ASourceID, FConfig.PipelineSourcePriorities,
+  Result:=ParsePriorityMapValue(ASourceID, FConfig.PipelineSourcePriorities,
     FConfig.PipelineDefaultPriority);
   if Result = FConfig.PipelineDefaultPriority then
-    Result := ParsePriorityMapValue(ExtractStreamNameFromSourceID(ASourceID),
+    Result:=ParsePriorityMapValue(ExtractStreamNameFromSourceID(ASourceID),
       FConfig.PipelineSourcePriorities, FConfig.PipelineDefaultPriority);
 end;
 
@@ -544,12 +545,12 @@ procedure TGraphGatewayApp.HandleCallbackPlayerFrame(Sender: TObject;
 var
   Player: TNamedCallbackPlayerSink;
 begin
-  if not (Sender is TNamedCallbackPlayerSink) then
+  if NOT (Sender IS TNamedCallbackPlayerSink) then
     Exit;
-  Player := TNamedCallbackPlayerSink(Sender);
+  Player:=TNamedCallbackPlayerSink(Sender);
   Inc(Player.FrameCount);
-  if (Player.LogEveryFrames <= 0) or
-    ((Player.FrameCount mod UInt64(Player.LogEveryFrames)) = 0) then
+  if (Player.LogEveryFrames <= 0) OR
+    ((Player.FrameCount MOD UInt64(Player.LogEveryFrames)) = 0) then
     WriteLn(Format(
       '[PLAYER:%s] frame=%d stream=%s ts=%dms age=%dms size=%dx%d key=%s seq=%d',
       [Player.Name, Player.FrameCount, AFrame.StreamName, AFrame.TimestampMS,
@@ -570,7 +571,7 @@ procedure TGraphGatewayApp.HandlePublishStarted(Sender: TObject;
 var
   SourceID: string;
 begin
-  SourceID := SessionSourceID(Session);
+  SourceID:=SessionSourceID(Session);
   if SourceID <> '' then
     FSourceSwitcher.Switcher.RegisterSource(SourceID, ResolveSourcePriority(SourceID));
   WriteLn(Format('Publish started: stream=%s from %s:%d',
@@ -588,7 +589,7 @@ procedure TGraphGatewayApp.HandleRelayConnected(Sender: TObject);
 var
   Relay: TRtmpRelaySinkNode;
 begin
-  Relay := FindRelaySinkByClient(Sender);
+  Relay:=FindRelaySinkByClient(Sender);
   if Relay <> nil then
     WriteLn(Format('Relay "%s" connected and publish established.', [Relay.Name]))
   else
@@ -599,7 +600,7 @@ procedure TGraphGatewayApp.HandleRelayDisconnected(Sender: TObject);
 var
   Relay: TRtmpRelaySinkNode;
 begin
-  Relay := FindRelaySinkByClient(Sender);
+  Relay:=FindRelaySinkByClient(Sender);
   if Relay <> nil then
     WriteLn(Format('Relay "%s" disconnected.', [Relay.Name]))
   else
@@ -616,11 +617,11 @@ var
 begin
   if ALevel < FConfig.LogLevel then
     Exit;
-  Relay := FindRelaySinkByClient(Sender);
+  Relay:=FindRelaySinkByClient(Sender);
   if Relay <> nil then
-    Prefix := 'RELAY:' + Relay.Name
+    Prefix:='RELAY:' + Relay.Name
   else
-    Prefix := 'RELAY';
+    Prefix:='RELAY';
   WriteLn(Format('[%s][%s] %s: %s', [Prefix, LEVEL_NAMES[ALevel], ACategory, AMessage]));
 end;
 
@@ -628,7 +629,7 @@ procedure TGraphGatewayApp.HandleRelayReconnect(Sender: TObject);
 var
   Relay: TRtmpRelaySinkNode;
 begin
-  Relay := FindRelaySinkByClient(Sender);
+  Relay:=FindRelaySinkByClient(Sender);
   if Relay <> nil then
     WriteLn(Format('Relay "%s" reconnecting.', [Relay.Name]))
   else
@@ -653,10 +654,10 @@ procedure TGraphGatewayApp.HandleServerData(Sender: TObject; Session: TRtmpServe
   Packet: TRtmpPacket);
 begin
   Inc(FPacketCount);
-  if (FConfig.LogLevel <= llInfo) and
-    (Packet.HasFlag(pfIsCodecConfig) or Packet.HasFlag(pfIsKeyframe) or
-    ((FConfig.PacketLogEvery > 0) and
-    ((FPacketCount mod UInt64(FConfig.PacketLogEvery)) = 0))) then
+  if (FConfig.LogLevel <= llInfo) AND
+    (Packet.HasFlag(pfIsCodecConfig) OR Packet.HasFlag(pfIsKeyframe) OR
+    ((FConfig.PacketLogEvery > 0) AND
+    ((FPacketCount MOD UInt64(FConfig.PacketLogEvery)) = 0))) then
     WriteLn(Format('Packet stream=%s type=%d ts=%d size=%d keyframe=%s config=%s',
       [Session.StreamName, Ord(Packet.MessageType), Packet.Timestamp,
        Packet.PayloadSize, BoolToStr(Packet.HasFlag(pfIsKeyframe), True),
@@ -677,57 +678,72 @@ procedure TGraphGatewayApp.LoadConfig(const APath: string);
 var
   Ini: TIniFile;
 begin
-  FConfig := Default(TGraphGatewayConfig);
-  FConfig.ConfigPath := ExpandFileName(APath);
-  FConfig.Server := DefaultRtmpServerConfig;
-  FConfig.PipelineActiveSource := '';
-  FConfig.PipelineDefaultPriority := 100;
-  FConfig.PipelineIdleTimeoutMS := 3000;
-  FConfig.PipelineSourcePriorities := '';
-  FConfig.LogLevel := llInfo;
-  FConfig.PacketLogEvery := 0;
+  FConfig:=Default(TGraphGatewayConfig);
+  FConfig.ConfigPath:=ExpandFileName(APath);
+  FConfig.Server:=DefaultRtmpServerConfig;
+  FConfig.PipelineActiveSource:='';
+  FConfig.PipelineDefaultPriority:=100;
+  FConfig.PipelineIdleTimeoutMS:=3000;
+  FConfig.PipelineSourcePriorities:='';
+  FConfig.LogLevel:=llInfo;
+  FConfig.PacketLogEvery:=0;
 
-  if not FileExists(FConfig.ConfigPath) then
+  if NOT FileExists(FConfig.ConfigPath) then
     raise Exception.CreateFmt('Config file not found: %s', [FConfig.ConfigPath]);
 
-  Ini := TIniFile.Create(FConfig.ConfigPath);
+  Ini:=TIniFile.Create(FConfig.ConfigPath);
   try
-    FConfig.Server.BindAddress := ConfigValueOrDefault(
+    FConfig.Server.BindAddress:=ConfigValueOrDefault(
       Ini.ReadString('server', 'bind_address', FConfig.Server.BindAddress),
       FConfig.Server.BindAddress);
-    FConfig.Server.Port := Word(Ini.ReadInteger('server', 'port', FConfig.Server.Port));
-    FConfig.Server.MaxSessions := Ini.ReadInteger('server', 'max_sessions',
+    FConfig.Server.Port:=Word(Ini.ReadInteger('server', 'port', FConfig.Server.Port));
+    FConfig.Server.MaxSessions:=Ini.ReadInteger('server', 'max_sessions',
       FConfig.Server.MaxSessions);
-    FConfig.Server.MaxChunkSize := Ini.ReadInteger('server', 'max_chunk_size',
+    FConfig.Server.MaxChunkSize:=Ini.ReadInteger('server', 'max_chunk_size',
       FConfig.Server.MaxChunkSize);
-    FConfig.Server.MaxMessageSize := Ini.ReadInteger('server', 'max_message_size',
+    FConfig.Server.MaxMessageSize:=Ini.ReadInteger('server', 'max_message_size',
       FConfig.Server.MaxMessageSize);
-    FConfig.Server.MaxChunkStreams := Ini.ReadInteger('server', 'max_chunk_streams',
+    FConfig.Server.MaxChunkStreams:=Ini.ReadInteger('server', 'max_chunk_streams',
       FConfig.Server.MaxChunkStreams);
-    FConfig.Server.ReadTimeoutMS := Ini.ReadInteger('server', 'read_timeout_ms',
+    FConfig.Server.ReadTimeoutMS:=Ini.ReadInteger('server', 'read_timeout_ms',
       FConfig.Server.ReadTimeoutMS);
-    FConfig.Server.WriteTimeoutMS := Ini.ReadInteger('server', 'write_timeout_ms',
+    FConfig.Server.WriteTimeoutMS:=Ini.ReadInteger('server', 'write_timeout_ms',
       FConfig.Server.WriteTimeoutMS);
-    FConfig.Server.BufferMaxPackets := Ini.ReadInteger('server', 'buffer_max_packets',
+    FConfig.Server.BufferMaxPackets:=Ini.ReadInteger('server', 'buffer_max_packets',
       FConfig.Server.BufferMaxPackets);
-    FConfig.Server.BufferMaxBytes := ReadUInt64Value(Ini, 'server',
+    FConfig.Server.BufferMaxBytes:=ReadUInt64Value(Ini, 'server',
       'buffer_max_bytes', FConfig.Server.BufferMaxBytes);
-    FConfig.Server.BufferMaxDurationMS := UInt32(Ini.ReadInteger('server',
+    FConfig.Server.Tls.Enabled:=Ini.ReadBool('server', 'tls_enabled',
+      FConfig.Server.Tls.Enabled);
+    FConfig.Server.Tls.CertificateFile:=Trim(Ini.ReadString('server',
+      'tls_certificate_file', FConfig.Server.Tls.CertificateFile));
+    FConfig.Server.Tls.CertificatePassword:=Ini.ReadString('server',
+      'tls_certificate_password', FConfig.Server.Tls.CertificatePassword);
+    FConfig.Server.Tls.PrivateKeyFile:=Trim(Ini.ReadString('server',
+      'tls_private_key_file', FConfig.Server.Tls.PrivateKeyFile));
+    FConfig.Server.Tls.CAFile:=Trim(Ini.ReadString('server', 'tls_ca_file',
+      FConfig.Server.Tls.CAFile));
+    FConfig.Server.Tls.CAPath:=Trim(Ini.ReadString('server', 'tls_ca_path',
+      FConfig.Server.Tls.CAPath));
+    FConfig.Server.Tls.RequireClientCertificate:=Ini.ReadBool('server',
+      'tls_require_client_certificate',
+      FConfig.Server.Tls.RequireClientCertificate);
+    FConfig.Server.BufferMaxDurationMS:=UInt32(Ini.ReadInteger('server',
       'buffer_max_duration_ms', Integer(FConfig.Server.BufferMaxDurationMS)));
-    FConfig.Server.EnableAnalyzer := Ini.ReadBool('server', 'enable_analyzer',
+    FConfig.Server.EnableAnalyzer:=Ini.ReadBool('server', 'enable_analyzer',
       FConfig.Server.EnableAnalyzer);
 
-    FConfig.PipelineIdleTimeoutMS := Ini.ReadInteger('pipeline', 'idle_timeout_ms',
+    FConfig.PipelineIdleTimeoutMS:=Ini.ReadInteger('pipeline', 'idle_timeout_ms',
       FConfig.PipelineIdleTimeoutMS);
-    FConfig.PipelineDefaultPriority := Ini.ReadInteger('pipeline',
+    FConfig.PipelineDefaultPriority:=Ini.ReadInteger('pipeline',
       'default_priority', FConfig.PipelineDefaultPriority);
-    FConfig.PipelineActiveSource := Trim(Ini.ReadString('pipeline', 'active_source',
+    FConfig.PipelineActiveSource:=Trim(Ini.ReadString('pipeline', 'active_source',
       FConfig.PipelineActiveSource));
-    FConfig.PipelineSourcePriorities := Trim(Ini.ReadString('pipeline',
+    FConfig.PipelineSourcePriorities:=Trim(Ini.ReadString('pipeline',
       'source_priorities', FConfig.PipelineSourcePriorities));
 
-    FConfig.LogLevel := ParseLogLevel(Ini.ReadString('logging', 'level', 'info'));
-    FConfig.PacketLogEvery := Ini.ReadInteger('logging', 'packet_log_every', 0);
+    FConfig.LogLevel:=ParseLogLevel(Ini.ReadString('logging', 'level', 'info'));
+    FConfig.PacketLogEvery:=Ini.ReadInteger('logging', 'packet_log_every', 0);
   finally
     Ini.Free;
   end;
@@ -759,11 +775,11 @@ procedure TGraphGatewayApp.RegisterPacketParent(const AName: string;
 var
   Index: Integer;
 begin
-  if (Trim(AName) = '') or (ANode = nil) then
+  if (Trim(AName) = '') OR (ANode = nil) then
     Exit;
-  Index := FPacketParents.IndexOf(AName);
+  Index:=FPacketParents.IndexOf(AName);
   if Index >= 0 then
-    FPacketParents.Objects[Index] := ANode
+    FPacketParents.Objects[Index]:=ANode
   else
     FPacketParents.AddObject(AName, ANode);
 end;
@@ -774,11 +790,11 @@ procedure TGraphGatewayApp.RegisterVideoParent(const AName: string;
 var
   Index: Integer;
 begin
-  if (Trim(AName) = '') or (ANode = nil) then
+  if (Trim(AName) = '') OR (ANode = nil) then
     Exit;
-  Index := FVideoParents.IndexOf(AName);
+  Index:=FVideoParents.IndexOf(AName);
   if Index >= 0 then
-    FVideoParents.Objects[Index] := ANode
+    FVideoParents.Objects[Index]:=ANode
   else
     FVideoParents.AddObject(AName, ANode);
 end;
@@ -786,24 +802,24 @@ end;
 
 function TGraphGatewayApp.SessionSourceID(Session: TRtmpServerSession): string;
 begin
-  Result := '';
+  Result:='';
   if Session = nil then
     Exit;
-  Result := Trim(Session.StreamName);
-  if (Trim(Session.AppName) <> '') and (Result <> '') then
-    Result := Trim(Session.AppName) + '/' + Result;
+  Result:=Trim(Session.StreamName);
+  if (Trim(Session.AppName) <> '') AND (Result <> '') then
+    Result:=Trim(Session.AppName) + '/' + Result;
 end;
 
 procedure TGraphGatewayApp.StartBranches;
 var
   I: Integer;
 begin
-  for I := 0 to FRelaySinks.Count - 1 do
+  for I:=0 to FRelaySinks.Count - 1 do
     TRtmpRelaySinkNode(FRelaySinks[I]).Start;
 
 {$IFDEF USE_FFMPEG}
 {$IFDEF USE_SFML}
-  for I := 0 to FPlayerThreads.Count - 1 do
+  for I:=0 to FPlayerThreads.Count - 1 do
     TSfmlPlayerThread(FPlayerThreads[I]).Start;
 {$ENDIF}
 {$ENDIF}
@@ -816,13 +832,13 @@ begin
 {$IFDEF USE_FFMPEG}
 {$IFDEF USE_SFML}
   if FPlayerThreads <> nil then
-    for I := 0 to FPlayerThreads.Count - 1 do
+    for I:=0 to FPlayerThreads.Count - 1 do
       TSfmlPlayerThread(FPlayerThreads[I]).Terminate;
 {$ENDIF}
 {$ENDIF}
 
   if FRelaySinks <> nil then
-    for I := 0 to FRelaySinks.Count - 1 do
+    for I:=0 to FRelaySinks.Count - 1 do
       TRtmpRelaySinkNode(FRelaySinks[I]).Stop;
 end;
 
@@ -852,94 +868,112 @@ var
   StatsNode: TRtmpPacketStatsNode;
   TeeNode: TRtmpPacketTeeNode;
 begin
-  Name := Copy(ASection, Length('graph.') + 1, MaxInt);
+  Name:=Copy(ASection, Length('graph.') + 1, MaxInt);
   if Name = '' then
     raise Exception.CreateFmt('Graph section name is invalid: %s', [ASection]);
 
-  Kind := ParseGraphKind(Ini.ReadString(ASection, 'kind', ''));
-  ParentName := Trim(Ini.ReadString(ASection, 'parent', 'program'));
-  PacketParent := nil;
+  Kind:=ParseGraphKind(Ini.ReadString(ASection, 'kind', ''));
+  ParentName:=Trim(Ini.ReadString(ASection, 'parent', 'program'));
+  PacketParent:=nil;
 {$IFDEF USE_FFMPEG}
-  VideoParent := nil;
+  VideoParent:=nil;
 {$ENDIF}
 
-  if (Kind = 'stats') or (Kind = 'tee') or (Kind = 'relay_policy') or
-    (Kind = 'buffer') or (Kind = 'relay_sink') or (Kind = 'video_decoder') then
+  if (Kind = 'stats') OR (Kind = 'tee') OR (Kind = 'relay_policy') OR
+    (Kind = 'buffer') OR (Kind = 'relay_sink') OR (Kind = 'video_decoder') then
   begin
-    PacketParent := FindPacketParent(ParentName);
+    PacketParent:=FindPacketParent(ParentName);
     if PacketParent = nil then
       raise Exception.CreateFmt('Unknown packet parent "%s" for %s', [ParentName, ASection]);
   end;
 
   if Kind = 'stats' then
   begin
-    StatsNode := TRtmpPacketStatsNode.Create;
+    StatsNode:=TRtmpPacketStatsNode.Create;
     FManagedObjects.Add(StatsNode);
     PacketParent.AddSink(StatsNode);
     RegisterPacketParent(Name, StatsNode);
   end
   else if Kind = 'tee' then
   begin
-    TeeNode := TRtmpPacketTeeNode.Create;
+    TeeNode:=TRtmpPacketTeeNode.Create;
     FManagedObjects.Add(TeeNode);
     PacketParent.AddSink(TeeNode);
     RegisterPacketParent(Name, TeeNode);
   end
   else if Kind = 'relay_policy' then
   begin
-    PolicyNode := TRtmpRelayPolicyNode.Create;
-    Policy := TRtmpRelayPolicy.CreateDefault;
-    Policy.AllowMetadata := ParseGraphBool(Ini, ASection, 'allow_metadata', True);
-    Policy.AllowAudio := ParseGraphBool(Ini, ASection, 'allow_audio', True);
-    Policy.AllowVideo := ParseGraphBool(Ini, ASection, 'allow_video', True);
-    Policy.WaitForKeyframe := ParseGraphBool(Ini, ASection, 'wait_for_keyframe', False);
-    PolicyNode.Policy := Policy;
+    PolicyNode:=TRtmpRelayPolicyNode.Create;
+    Policy:=TRtmpRelayPolicy.CreateDefault;
+    Policy.AllowMetadata:=ParseGraphBool(Ini, ASection, 'allow_metadata', True);
+    Policy.AllowAudio:=ParseGraphBool(Ini, ASection, 'allow_audio', True);
+    Policy.AllowVideo:=ParseGraphBool(Ini, ASection, 'allow_video', True);
+    Policy.WaitForKeyframe:=ParseGraphBool(Ini, ASection, 'wait_for_keyframe', False);
+    PolicyNode.Policy:=Policy;
     FManagedObjects.Add(PolicyNode);
     PacketParent.AddSink(PolicyNode);
     RegisterPacketParent(Name, PolicyNode);
   end
   else if Kind = 'buffer' then
   begin
-    Buffer := TRtmpCircularBuffer.Create(
+    Buffer:=TRtmpCircularBuffer.Create(
       Ini.ReadInteger(ASection, 'max_packets', FConfig.Server.BufferMaxPackets),
       ReadUInt64Value(Ini, ASection, 'max_bytes', FConfig.Server.BufferMaxBytes),
       UInt32(Ini.ReadInteger(ASection, 'max_duration_ms',
         Integer(FConfig.Server.BufferMaxDurationMS))));
-    BufferSink := TRtmpBufferSink.Create(Buffer);
+    BufferSink:=TRtmpBufferSink.Create(Buffer);
     FManagedObjects.Add(Buffer);
     FManagedObjects.Add(BufferSink);
     PacketParent.AddSink(BufferSink);
   end
   else if Kind = 'relay_sink' then
   begin
-    RelaySink := TRtmpRelaySinkNode.Create(Name,
+    RelaySink:=TRtmpRelaySinkNode.Create(Name,
       Ini.ReadInteger(ASection, 'buffer_max_packets', FConfig.Server.BufferMaxPackets),
       ReadUInt64Value(Ini, ASection, 'buffer_max_bytes', FConfig.Server.BufferMaxBytes),
       UInt32(Ini.ReadInteger(ASection, 'buffer_max_duration_ms',
         Integer(FConfig.Server.BufferMaxDurationMS))));
-    ClientConfig := RelaySink.Config;
-    ClientConfig := ClientConfig.WithTargetUrl(Trim(Ini.ReadString(ASection,
+    ClientConfig:=RelaySink.Config;
+    ClientConfig:=ClientConfig.WithTargetUrl(Trim(Ini.ReadString(ASection,
       'target_url', '')));
-    ClientConfig.App := Trim(Ini.ReadString(ASection, 'app', ''));
-    ClientConfig.StreamKey := Trim(Ini.ReadString(ASection, 'stream_key', ''));
-    ClientConfig.ConnectTimeoutMS := Ini.ReadInteger(ASection, 'connect_timeout_ms',
+    ClientConfig.App:=Trim(Ini.ReadString(ASection, 'app', ''));
+    ClientConfig.StreamKey:=Trim(Ini.ReadString(ASection, 'stream_key', ''));
+    ClientConfig.ConnectTimeoutMS:=Ini.ReadInteger(ASection, 'connect_timeout_ms',
       ClientConfig.ConnectTimeoutMS);
-    ClientConfig.ReconnectDelayMS := Ini.ReadInteger(ASection, 'reconnect_delay_ms',
+    ClientConfig.ReconnectDelayMS:=Ini.ReadInteger(ASection, 'reconnect_delay_ms',
       ClientConfig.ReconnectDelayMS);
-    ClientConfig.MaxReconnectDelayMS := Ini.ReadInteger(ASection, 'max_reconnect_delay_ms',
+    ClientConfig.MaxReconnectDelayMS:=Ini.ReadInteger(ASection, 'max_reconnect_delay_ms',
       ClientConfig.MaxReconnectDelayMS);
-    ClientConfig.OutChunkSize := Ini.ReadInteger(ASection, 'out_chunk_size',
+    ClientConfig.ReconnectBoundaryTimeoutMS:=Ini.ReadInteger(ASection,
+      'reconnect_boundary_timeout_ms', ClientConfig.ReconnectBoundaryTimeoutMS);
+    ClientConfig.Tls.VerifyPeer:=Ini.ReadBool(ASection, 'tls_verify_peer',
+      ClientConfig.Tls.VerifyPeer);
+    ClientConfig.Tls.ServerName:=Trim(Ini.ReadString(ASection,
+      'tls_server_name', ClientConfig.Tls.ServerName));
+    ClientConfig.Tls.CAFile:=Trim(Ini.ReadString(ASection, 'tls_ca_file',
+      ClientConfig.Tls.CAFile));
+    ClientConfig.Tls.CAPath:=Trim(Ini.ReadString(ASection, 'tls_ca_path',
+      ClientConfig.Tls.CAPath));
+    ClientConfig.Tls.CertificateFile:=Trim(Ini.ReadString(ASection,
+      'tls_certificate_file', ClientConfig.Tls.CertificateFile));
+    ClientConfig.Tls.CertificatePassword:=Ini.ReadString(ASection,
+      'tls_certificate_password', ClientConfig.Tls.CertificatePassword);
+    ClientConfig.Tls.PrivateKeyFile:=Trim(Ini.ReadString(ASection,
+      'tls_private_key_file', ClientConfig.Tls.PrivateKeyFile));
+    ClientConfig.AllowInsecureRedirect:=Ini.ReadBool(ASection,
+      'allow_insecure_redirect', ClientConfig.AllowInsecureRedirect);
+    ClientConfig.OutChunkSize:=Ini.ReadInteger(ASection, 'out_chunk_size',
       ClientConfig.OutChunkSize);
-    ClientConfig.TimestampMode := ParseTimestampMode(
+    ClientConfig.TimestampMode:=ParseTimestampMode(
       Ini.ReadString(ASection, 'timestamp_mode', TimestampModeName(ClientConfig.TimestampMode)));
-    RelaySink.Config := ClientConfig;
+    RelaySink.Config:=ClientConfig;
     if Trim(ClientConfig.TargetURL) = '' then
       raise Exception.CreateFmt('relay_sink %s requires target_url', [ASection]);
 
-    RelaySink.Client.OnConnected := HandleRelayConnected;
-    RelaySink.Client.OnDisconnected := HandleRelayDisconnected;
-    RelaySink.Client.OnReconnect := HandleRelayReconnect;
-    RelaySink.Client.LogSink.OnLog := HandleRelayLog;
+    RelaySink.Client.OnConnected:=HandleRelayConnected;
+    RelaySink.Client.OnDisconnected:=HandleRelayDisconnected;
+    RelaySink.Client.OnReconnect:=HandleRelayReconnect;
+    RelaySink.Client.LogSink.OnLog:=HandleRelayLog;
 
     FManagedObjects.Add(RelaySink);
     FRelaySinks.Add(RelaySink);
@@ -948,7 +982,7 @@ begin
 {$IFDEF USE_FFMPEG}
   else if Kind = 'video_decoder' then
   begin
-    DecoderNode := TRtmpVideoDecoderNode.Create;
+    DecoderNode:=TRtmpVideoDecoderNode.Create;
     FManagedObjects.Add(DecoderNode);
     FVideoDecoders.Add(DecoderNode);
     PacketParent.AddSink(DecoderNode);
@@ -956,13 +990,13 @@ begin
   end
   else if Kind = 'callback_player' then
   begin
-    VideoParent := FindVideoParent(ParentName);
+    VideoParent:=FindVideoParent(ParentName);
     if VideoParent = nil then
       raise Exception.CreateFmt('Unknown video parent "%s" for %s', [ParentName, ASection]);
-    CallbackPlayer := TNamedCallbackPlayerSink.Create;
-    CallbackPlayer.Name := Name;
-    CallbackPlayer.LogEveryFrames := Ini.ReadInteger(ASection, 'log_every_frames', 30);
-    CallbackPlayer.OnFrame := HandleCallbackPlayerFrame;
+    CallbackPlayer:=TNamedCallbackPlayerSink.Create;
+    CallbackPlayer.Name:=Name;
+    CallbackPlayer.LogEveryFrames:=Ini.ReadInteger(ASection, 'log_every_frames', 30);
+    CallbackPlayer.OnFrame:=HandleCallbackPlayerFrame;
     FManagedObjects.Add(CallbackPlayer);
     FCallbackPlayers.Add(CallbackPlayer);
     VideoParent.AddSink(CallbackPlayer);
@@ -970,18 +1004,18 @@ begin
 {$IFDEF USE_SFML}
   else if Kind = 'sfml_player' then
   begin
-    VideoParent := FindVideoParent(ParentName);
+    VideoParent:=FindVideoParent(ParentName);
     if VideoParent = nil then
       raise Exception.CreateFmt('Unknown video parent "%s" for %s', [ParentName, ASection]);
-    SfmlPlayer := TNamedSfmlPlayerSink.Create(
+    SfmlPlayer:=TNamedSfmlPlayerSink.Create(
       Cardinal(Ini.ReadInteger(ASection, 'window_width', 960)),
       Cardinal(Ini.ReadInteger(ASection, 'window_height', 540)),
       AnsiString(Ini.ReadString(ASection, 'title', Name)));
-    SfmlPlayer.Name := Name;
+    SfmlPlayer.Name:=Name;
     FManagedObjects.Add(SfmlPlayer);
     FSfmlPlayers.Add(SfmlPlayer);
     VideoParent.AddSink(SfmlPlayer);
-    PlayerThread := TSfmlPlayerThread.Create(SfmlPlayer);
+    PlayerThread:=TSfmlPlayerThread.Create(SfmlPlayer);
     FPlayerThreads.Add(PlayerThread);
   end
 {$ENDIF}
@@ -996,12 +1030,12 @@ var
   Ini: TIniFile;
   Sections: TStringList;
 begin
-  Ini := TIniFile.Create(FConfig.ConfigPath);
-  Sections := TStringList.Create;
+  Ini:=TIniFile.Create(FConfig.ConfigPath);
+  Sections:=TStringList.Create;
   try
     Ini.ReadSections(Sections);
-    for I := 0 to Sections.Count - 1 do
-      if SameText(Copy(Sections[I], 1, Length('graph.')), 'graph.') and
+    for I:=0 to Sections.Count - 1 do
+      if SameText(Copy(Sections[I], 1, Length('graph.')), 'graph.') AND
         ParseGraphBool(Ini, Sections[I], 'enabled', True) then
         BuildGraphSection(Ini, Sections[I]);
   finally
@@ -1015,20 +1049,20 @@ var
   ConfigPath: string;
 begin
   if ParamCount >= 1 then
-    ConfigPath := ParamStr(1)
+    ConfigPath:=ParamStr(1)
   else
-    ConfigPath := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) +
+    ConfigPath:=IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) +
       'RtmpGraphGatewayConsole.ini';
 
   LoadConfig(ConfigPath);
 
-  FServer.Config := FConfig.Server;
-  FServer.MinLogLevel := llDebug;
+  FServer.Config:=FConfig.Server;
+  FServer.MinLogLevel:=llDebug;
   FServer.AttachPlaybackBuffer(FProgramBuffer);
-  FProgramBuffer.MaxPackets := FConfig.Server.BufferMaxPackets;
-  FProgramBuffer.MaxBytes := FConfig.Server.BufferMaxBytes;
-  FProgramBuffer.MaxDurationMS := FConfig.Server.BufferMaxDurationMS;
-  FSourceSwitcher.Switcher.IdleTimeoutMS := FConfig.PipelineIdleTimeoutMS;
+  FProgramBuffer.MaxPackets:=FConfig.Server.BufferMaxPackets;
+  FProgramBuffer.MaxBytes:=FConfig.Server.BufferMaxBytes;
+  FProgramBuffer.MaxDurationMS:=FConfig.Server.BufferMaxDurationMS;
+  FSourceSwitcher.Switcher.IdleTimeoutMS:=FConfig.PipelineIdleTimeoutMS;
   if FConfig.PipelineActiveSource <> '' then
     FSourceSwitcher.ForceActiveSource(FConfig.PipelineActiveSource)
   else
@@ -1040,7 +1074,7 @@ begin
   try
     StartBranches;
 
-    FStatsThread := TGraphGatewayStatsThread.Create(Self);
+    FStatsThread:=TGraphGatewayStatsThread.Create(Self);
     FStatsThread.Start;
     PrintStartupSummary;
     WriteLn('Press Enter to stop.');
@@ -1058,7 +1092,7 @@ end;
 
 function TGraphGatewayApp.ServerStats: TRtmpServerStats;
 begin
-  Result := FServer.GetStats;
+  Result:=FServer.GetStats;
 end;
 
 var
@@ -1066,7 +1100,7 @@ var
 
 begin
   RtmpMaskFloatingPointExceptions;
-  App := TGraphGatewayApp.Create;
+  App:=TGraphGatewayApp.Create;
   try
     App.Run;
   finally

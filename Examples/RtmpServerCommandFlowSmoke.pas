@@ -13,31 +13,42 @@ uses
   {$ENDIF}
   Classes,
   SysUtils,
-  RtmpAmf0,
-  RtmpBuffer,
-  RtmpChunkReassembler,
-  RtmpCommand,
-  RtmpCompat,
-  RtmpBytes,
-  RtmpPacket,
-  RtmpProtocol,
-  RtmpServer,
-  RtmpServerSession,
-  RtmpTransport,
-  RtmpTransportNative,
-  RtmpTypes;
+  TRTMP.RTMP.Auth,
+  TRTMP.RTMP.Protocol.AMF0,
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.RTMP.Protocol.Chunk,
+  TRTMP.RTMP.Protocol.Command,
+  TRTMP.Core.Compat,
+  TRTMP.Core.Bytes,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Protocol.Core,
+  TRTMP.RTMP.Server,
+  TRTMP.RTMP.Server.Session,
+  TRTMP.Transport,
+  TRTMP.Transport.Native,
+  TRTMP.RTMP.Types;
 
 type
+  TCommandFlowAuthorizer = class(TInterfacedObject, IRtmpServerAuthorizer)
+  public
+    function AuthorizeConnect(
+      const AContext: TRtmpConnectAuthorizationContext): TRtmpAuthorizationDecision;
+    function AuthorizePublish(
+      const AContext: TRtmpPublishAuthorizationContext): TRtmpAuthorizationDecision;
+  end;
+
   TServerCommandFlowSmoke = class
   private
     FLogs: TStringList;
     FPublishStopCount: Integer;
     FPublishStopStreamName: string;
+    FRequestReconnectOnPublish: Boolean;
     FServer: TRtmpServer;
     FTransportFactory: IRtmpTransportFactory;
     procedure AssertTrue(const AMessage: string; AValue: Boolean);
     function BuildObject(const APairs: array of const): TRtmpAmf0Object;
     procedure HandlePublishStopped(Sender: TObject; Session: TRtmpServerSession);
+    procedure HandlePublishStarted(Sender: TObject; Session: TRtmpServerSession);
     procedure HandleServerLog(Sender: TObject; ALevel: TRtmpLogLevel;
       const ACategory, AMessage: string);
     function LogContains(const AFragment: string): Boolean;
@@ -63,8 +74,10 @@ type
       AFlags: TRtmpPacketFlags);
     procedure StopServer;
     procedure TestAmf3CommandRejected;
+    procedure TestAuthorization;
     procedure TestPlayBootstrap;
     procedure TestPublishBeforeCreateStreamRejected;
+    procedure TestReconnectRequest;
     procedure TestTeardownCommands;
     procedure TestUnsupportedMessageIgnored;
     function WaitForActiveSessions(AExpected: Integer; ATimeoutMS: Integer): Boolean;
@@ -76,14 +89,33 @@ type
     procedure Run;
   end;
 
+function TCommandFlowAuthorizer.AuthorizeConnect(
+  const AContext: TRtmpConnectAuthorizationContext): TRtmpAuthorizationDecision;
+begin
+  if SameText(AContext.App, 'deny') then
+    Result:=TRtmpAuthorizationDecision.Deny('', 'Connect denied by smoke authorizer')
+  else
+    Result:=TRtmpAuthorizationDecision.Allow;
+end;
+
+function TCommandFlowAuthorizer.AuthorizePublish(
+  const AContext: TRtmpPublishAuthorizationContext): TRtmpAuthorizationDecision;
+begin
+  if SameText(AContext.StreamName, 'forbidden-stream') then
+    Result:=TRtmpAuthorizationDecision.Deny('', 'Publish denied by smoke authorizer')
+  else
+    Result:=TRtmpAuthorizationDecision.Allow;
+end;
+
 constructor TServerCommandFlowSmoke.Create;
 begin
   inherited Create;
-  FLogs := TStringList.Create;
-  FPublishStopCount := 0;
-  FPublishStopStreamName := '';
-  FTransportFactory := TRtmpNativeTransportFactory.Create;
-  FServer := nil;
+  FLogs:=TStringList.Create;
+  FPublishStopCount:=0;
+  FPublishStopStreamName:='';
+  FRequestReconnectOnPublish:=False;
+  FTransportFactory:=TRtmpNativeTransportFactory.Create;
+  FServer:=nil;
 end;
 
 destructor TServerCommandFlowSmoke.Destroy;
@@ -95,7 +127,7 @@ end;
 
 procedure TServerCommandFlowSmoke.AssertTrue(const AMessage: string; AValue: Boolean);
 begin
-  if not AValue then
+  if NOT AValue then
     raise Exception.Create(AMessage);
 end;
 
@@ -104,24 +136,24 @@ var
   I: Integer;
   KeyName: string;
 begin
-  if (Length(APairs) mod 2) <> 0 then
+  if (Length(APairs) MOD 2) <> 0 then
     raise Exception.Create('BuildObject expects name/value pairs');
 
-  Result := TRtmpAmf0Object.Create;
-  I := 0;
+  Result:=TRtmpAmf0Object.Create;
+  I:=0;
   while I < Length(APairs) do
   begin
     case APairs[I].VType of
       vtAnsiString:
-        KeyName := string(AnsiString(APairs[I].VAnsiString));
+        KeyName:=string(AnsiString(APairs[I].VAnsiString));
       vtPChar:
-        KeyName := string(APairs[I].VPChar);
+        KeyName:=string(APairs[I].VPChar);
       vtChar:
-        KeyName := string(APairs[I].VChar);
+        KeyName:=string(APairs[I].VChar);
       vtString:
-        KeyName := string(APairs[I].VString^);
+        KeyName:=string(APairs[I].VString^);
       vtUnicodeString:
-        KeyName := string(UnicodeString(APairs[I].VUnicodeString));
+        KeyName:=string(UnicodeString(APairs[I].VUnicodeString));
     else
       raise Exception.Create('BuildObject key must be a string');
     end;
@@ -158,10 +190,10 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 procedure TServerCommandFlowSmoke.HandleServerLog(Sender: TObject;
@@ -177,18 +209,26 @@ procedure TServerCommandFlowSmoke.HandlePublishStopped(Sender: TObject;
 begin
   Inc(FPublishStopCount);
   if Session <> nil then
-    FPublishStopStreamName := Session.StreamName
+    FPublishStopStreamName:=Session.StreamName
   else
-    FPublishStopStreamName := '';
+    FPublishStopStreamName:='';
   FLogs.Add(Format('[EVENT] publish-stopped stream=%s', [FPublishStopStreamName]));
+end;
+
+procedure TServerCommandFlowSmoke.HandlePublishStarted(Sender: TObject;
+  Session: TRtmpServerSession);
+begin
+  if FRequestReconnectOnPublish AND (Session <> nil) then
+    AssertTrue('server rejected reconnect request for capable peer',
+      Session.RequestReconnect('/redirected-live', 'Command-flow smoke'));
 end;
 
 function TServerCommandFlowSmoke.LogContains(const AFragment: string): Boolean;
 var
   I: Integer;
 begin
-  Result := False;
-  for I := 0 to FLogs.Count - 1 do
+  Result:=False;
+  for I:=0 to FLogs.Count - 1 do
     if Pos(AFragment, FLogs[I]) > 0 then
       Exit(True);
 end;
@@ -199,17 +239,17 @@ var
   Offset: Integer;
   Received: Integer;
 begin
-  Result := False;
-  Offset := 0;
+  Result:=False;
+  Offset:=0;
   SetLength(ABytes, ACount);
   while Offset < ACount do
   begin
-    Received := AConnection.Receive(ABytes[Offset], ACount - Offset, ATimeoutMS);
+    Received:=AConnection.Receive(ABytes[Offset], ACount - Offset, ATimeoutMS);
     if Received <= 0 then
       Exit(False);
     Inc(Offset, Received);
   end;
-  Result := True;
+  Result:=True;
 end;
 
 procedure TServerCommandFlowSmoke.RestartServer(APort: Word);
@@ -218,24 +258,29 @@ var
 begin
   StopServer;
   FLogs.Clear;
-  FPublishStopCount := 0;
-  FPublishStopStreamName := '';
-  FServer := TRtmpServer.Create;
-  Config := DefaultRtmpServerConfig;
-  Config.BindAddress := '127.0.0.1';
-  Config.Port := APort;
-  FServer.Config := Config;
-  FServer.LogSink.OnLog := HandleServerLog;
-  FServer.OnPublishStopped := HandlePublishStopped;
-  FServer.MinLogLevel := llDebug;
+  FPublishStopCount:=0;
+  FPublishStopStreamName:='';
+  FRequestReconnectOnPublish:=False;
+  FServer:=TRtmpServer.Create;
+  Config:=DefaultRtmpServerConfig;
+  Config.BindAddress:='127.0.0.1';
+  Config.Port:=APort;
+  FServer.Config:=Config;
+  FServer.Authorizer:=TCommandFlowAuthorizer.Create;
+  FServer.LogSink.OnLog:=HandleServerLog;
+  FServer.OnPublishStopped:=HandlePublishStopped;
+  FServer.OnPublishStarted:=HandlePublishStarted;
+  FServer.MinLogLevel:=llDebug;
   FServer.Start;
 end;
 
 procedure TServerCommandFlowSmoke.Run;
 begin
   TestAmf3CommandRejected;
+  TestAuthorization;
   TestPlayBootstrap;
   TestPublishBeforeCreateStreamRejected;
+  TestReconnectRequest;
   TestTeardownCommands;
   TestUnsupportedMessageIgnored;
   WriteLn('Server command-flow smoke passed.');
@@ -250,27 +295,27 @@ var
   Values: TRtmpAmf0ValueList;
   Writer: TRtmpByteWriter;
 begin
-  Values := TRtmpAmf0ValueList.Create(True);
+  Values:=TRtmpAmf0ValueList.Create(True);
   try
-    for I := 0 to High(AValues) do
-      if AValues[I] is TRtmpAmf0Value then
+    for I:=0 to High(AValues) do
+      if AValues[I] IS TRtmpAmf0Value then
         Values.AddValue(TRtmpAmf0Value(AValues[I]).Clone)
       else
         raise Exception.Create('SendCommandMessage only accepts TRtmpAmf0Value objects');
-    Payload := TRtmpAmf0.EncodeValues(Values);
+    Payload:=TRtmpAmf0.EncodeValues(Values);
   finally
     Values.Free;
   end;
 
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType0;
-  Header.Timestamp := 0;
-  Header.MessageLength := Length(Payload);
-  Header.MessageTypeID := RtmpMessageTypeID(mtCommandAMF0);
-  Header.MessageStreamID := AMessageStreamID;
-  Header.HasExtendedTimestamp := False;
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType0;
+  Header.Timestamp:=0;
+  Header.MessageLength:=Length(Payload);
+  Header.MessageTypeID:=RtmpMessageTypeID(mtCommandAMF0);
+  Header.MessageStreamID:=AMessageStreamID;
+  Header.HasExtendedTimestamp:=False;
 
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     WriteChunkBasicHeader(Writer, hfType0, AChunkStreamID);
     WriteChunkMessageHeader(Writer, Header);
@@ -288,15 +333,15 @@ var
   Header: TRtmpChunkMessageHeader;
   Writer: TRtmpByteWriter;
 begin
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType0;
-  Header.Timestamp := ATimestamp;
-  Header.MessageLength := Length(APayload);
-  Header.MessageTypeID := AMessageTypeID;
-  Header.MessageStreamID := AMessageStreamID;
-  Header.HasExtendedTimestamp := ATimestamp >= RTMP_TIMESTAMP_EXTENDED;
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType0;
+  Header.Timestamp:=ATimestamp;
+  Header.MessageLength:=Length(APayload);
+  Header.MessageTypeID:=AMessageTypeID;
+  Header.MessageStreamID:=AMessageStreamID;
+  Header.HasExtendedTimestamp:=ATimestamp >= RTMP_TIMESTAMP_EXTENDED;
 
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     WriteChunkBasicHeader(Writer, hfType0, AChunkStreamID);
     WriteChunkMessageHeader(Writer, Header);
@@ -312,10 +357,11 @@ procedure TServerCommandFlowSmoke.SendConnect(const AConnection: IRtmpConnection
 var
   ConnectInfo: TRtmpAmf0Object;
 begin
-  ConnectInfo := BuildObject([
+  ConnectInfo:=BuildObject([
     'app', AApp,
     'tcUrl', ATcUrl,
-    'flashVer', 'TRTMP-CommandFlowSmoke/0.1'
+    'flashVer', 'TRTMP-CommandFlowSmoke/0.1',
+    'capsEx', RTMP_DEFAULT_ENHANCED_CAPABILITIES
   ]);
   try
     SendCommandMessage(AConnection, 3, 0, [
@@ -398,10 +444,10 @@ var
   Offset: Integer;
   Sent: Integer;
 begin
-  Offset := 0;
+  Offset:=0;
   while Offset < Length(ABytes) do
   begin
-    Sent := AConnection.Send(ABytes[Offset], Length(ABytes) - Offset, 3000);
+    Sent:=AConnection.Send(ABytes[Offset], Length(ABytes) - Offset, 3000);
     if Sent <= 0 then
       raise Exception.Create('Failed to send test bytes');
     Inc(Offset, Sent);
@@ -425,7 +471,7 @@ procedure TServerCommandFlowSmoke.SeedPacket(AMessageType: TRtmpMessageType;
 var
   Packet: TRtmpPacket;
 begin
-  Packet := TRtmpPacket.Create(AMessageType, ATimestamp, 0, 1, AChunkStreamID,
+  Packet:=TRtmpPacket.Create(AMessageType, ATimestamp, 0, 1, AChunkStreamID,
     TRtmpSharedPayload.Create(APayload), AFlags, ASequenceNo);
   FServer.Buffer.Push(Packet);
 end;
@@ -444,7 +490,7 @@ var
   Connection: IRtmpConnection;
 begin
   RestartServer(1956);
-  Connection := FTransportFactory.CreateClientConnection(
+  Connection:=FTransportFactory.CreateClientConnection(
     TRtmpSocketEndpoint.Create('127.0.0.1', 1956), 3000);
   try
     WriteHandshake(Connection);
@@ -458,6 +504,51 @@ begin
     Connection.Close;
   end;
 
+  StopServer;
+end;
+
+procedure TServerCommandFlowSmoke.TestAuthorization;
+var
+  Connection: IRtmpConnection;
+begin
+  RestartServer(1963);
+  Connection:=FTransportFactory.CreateClientConnection(
+    TRtmpSocketEndpoint.Create('127.0.0.1', 1963), 3000);
+  try
+    WriteHandshake(Connection);
+    SendConnect(Connection, 'deny', 'rtmp://127.0.0.1:1963/deny');
+
+    AssertTrue('expected connect authorization denial log: ' + FLogs.Text,
+      WaitForLog('Denied connect app=deny', 2000));
+    AssertTrue('expected default connect authorization code',
+      WaitForLog('code=NetConnection.Connect.Rejected', 1000));
+    AssertTrue('expected denied connect session to close',
+      WaitForActiveSessions(0, 2000));
+  finally
+    Connection.Close;
+  end;
+  StopServer;
+
+  RestartServer(1964);
+  Connection:=FTransportFactory.CreateClientConnection(
+    TRtmpSocketEndpoint.Create('127.0.0.1', 1964), 3000);
+  try
+    WriteHandshake(Connection);
+    SendConnect(Connection, 'live', 'rtmp://127.0.0.1:1964/live');
+    Sleep(50);
+    SendCreateStream(Connection);
+    Sleep(50);
+    SendPublish(Connection, 'forbidden-stream');
+
+    AssertTrue('expected publish authorization denial log: ' + FLogs.Text,
+      WaitForLog('Denied publish app=live stream=forbidden-stream', 2000));
+    AssertTrue('expected default publish authorization code',
+      WaitForLog('code=NetStream.Publish.Rejected', 1000));
+    AssertTrue('expected denied publish session to close',
+      WaitForActiveSessions(0, 2000));
+  finally
+    Connection.Close;
+  end;
   StopServer;
 end;
 
@@ -485,14 +576,14 @@ var
   Values: TRtmpAmf0ValueList;
 begin
   RestartServer(1960);
-  PlaybackBuffer := TRtmpCircularBuffer.Create(128, 1024 * 1024, 5000);
-  MetaInfo := BuildObject([
+  PlaybackBuffer:=TRtmpCircularBuffer.Create(128, 1024 * 1024, 5000);
+  MetaInfo:=BuildObject([
     'width', 1280,
     'height', 720
   ]);
-  Values := TRtmpAmf0ValueList.Create(True);
-  Reassembler := TRtmpChunkReassembler.Create(4096);
-  Connection := FTransportFactory.CreateClientConnection(
+  Values:=TRtmpAmf0ValueList.Create(True);
+  Reassembler:=TRtmpChunkReassembler.Create(4096);
+  Connection:=FTransportFactory.CreateClientConnection(
     TRtmpSocketEndpoint.Create('127.0.0.1', 1960), 3000);
   try
     FServer.AttachPlaybackBuffer(PlaybackBuffer);
@@ -517,15 +608,15 @@ begin
     Sleep(50);
     SendPlay(Connection, 'play-bootstrap');
 
-    GotAudio := False;
-    GotMetadata := False;
-    GotPlayReset := False;
-    GotPlayStart := False;
-    GotStreamBegin := False;
-    GotVideo := False;
-    Deadline := RtmpGetTickCount64 + 3000;
+    GotAudio:=False;
+    GotMetadata:=False;
+    GotPlayReset:=False;
+    GotPlayStart:=False;
+    GotStreamBegin:=False;
+    GotVideo:=False;
+    Deadline:=RtmpGetTickCount64 + 3000;
     repeat
-      Received := Connection.Receive(Buffer, SizeOf(Buffer), 200);
+      Received:=Connection.Receive(Buffer, SizeOf(Buffer), 200);
       if Received > 0 then
       begin
         SetLength(BytesIn, Received);
@@ -537,22 +628,22 @@ begin
             mtSetChunkSize:
               if Length(MessageOut.Payload) >= 4 then
               begin
-                Reader := TRtmpByteReader.Create(MessageOut.Payload);
+                Reader:=TRtmpByteReader.Create(MessageOut.Payload);
                 try
-                  Reassembler.InChunkSize := Integer(Reader.ReadUInt32BE);
+                  Reassembler.InChunkSize:=Integer(Reader.ReadUInt32BE);
                 finally
                   Reader.Free;
                 end;
               end;
             mtUserControl:
               begin
-                Reader := TRtmpByteReader.Create(MessageOut.Payload);
+                Reader:=TRtmpByteReader.Create(MessageOut.Payload);
                 try
                   if Reader.Remaining >= 6 then
                   begin
-                    EventType := Reader.ReadUInt16BE;
-                    if (EventType = Ord(ucStreamBegin)) and (Reader.ReadUInt32BE = 1) then
-                      GotStreamBegin := True;
+                    EventType:=Reader.ReadUInt16BE;
+                    if (EventType = Ord(ucStreamBegin)) AND (Reader.ReadUInt32BE = 1) then
+                      GotStreamBegin:=True;
                   end;
                 finally
                   Reader.Free;
@@ -560,33 +651,33 @@ begin
               end;
             mtCommandAMF0:
               begin
-                Command := TRtmpCommandMessage.Create(MessageOut.Payload);
+                Command:=TRtmpCommandMessage.Create(MessageOut.Payload);
                 try
-                  if Command.IsCommand('onStatus') and
-                    (Command.ArgumentCount > 3) and
-                    (Command[3] is TRtmpAmf0Object) then
+                  if Command.IsCommand('onStatus') AND
+                    (Command.ArgumentCount > 3) AND
+                    (Command[3] IS TRtmpAmf0Object) then
                   begin
-                    Code := TRtmpAmf0Object(Command[3]).GetString('code');
+                    Code:=TRtmpAmf0Object(Command[3]).GetString('code');
                     if SameText(Code, 'NetStream.Play.Reset') then
-                      GotPlayReset := True
+                      GotPlayReset:=True
                     else if SameText(Code, 'NetStream.Play.Start') then
-                      GotPlayStart := True;
+                      GotPlayStart:=True;
                   end;
                 finally
                   Command.Free;
                 end;
               end;
             mtDataAMF0:
-              GotMetadata := True;
+              GotMetadata:=True;
             mtAudio:
-              GotAudio := True;
+              GotAudio:=True;
             mtVideo:
-              GotVideo := True;
+              GotVideo:=True;
           end;
         end;
       end;
-    until (RtmpGetTickCount64 >= Deadline) or
-      (GotStreamBegin and GotPlayReset and GotPlayStart and GotMetadata and GotAudio and GotVideo);
+    until (RtmpGetTickCount64 >= Deadline) OR
+      (GotStreamBegin AND GotPlayReset AND GotPlayStart AND GotMetadata AND GotAudio AND GotVideo);
 
     AssertTrue('expected play acceptance log',
       WaitForLog('play stream=play-bootstrap', 2000));
@@ -615,11 +706,11 @@ var
   Received: Integer;
 begin
   RestartServer(1957);
-  Connection := FTransportFactory.CreateClientConnection(
+  Connection:=FTransportFactory.CreateClientConnection(
     TRtmpSocketEndpoint.Create('127.0.0.1', 1957), 3000);
   try
     WriteHandshake(Connection);
-    Received := Connection.Receive(ProbeBuffer, SizeOf(ProbeBuffer), 200);
+    Received:=Connection.Receive(ProbeBuffer, SizeOf(ProbeBuffer), 200);
     AssertTrue('expected server protocol defaults to wait for connect',
       Received <= 0);
     SendConnect(Connection, 'live', 'rtmp://127.0.0.1:1957/live');
@@ -627,7 +718,7 @@ begin
     SendPublish(Connection, 'bad-sequence');
 
     AssertTrue('expected publish-before-createStream rejection log',
-      WaitForLog('Rejected publish before createStream established a message stream', 2000) or
+      WaitForLog('Rejected publish before createStream established a message stream', 2000) OR
       WaitForLog('Rejected command publish', 2000));
     AssertTrue('expected session to end after bad publish ordering',
       WaitForActiveSessions(0, 2000));
@@ -638,12 +729,90 @@ begin
   StopServer;
 end;
 
+procedure TServerCommandFlowSmoke.TestReconnectRequest;
+var
+  Buffer: array[0..8191] of Byte;
+  Code: string;
+  Command: TRtmpCommandMessage;
+  Connection: IRtmpConnection;
+  Deadline: UInt64;
+  GotReconnectRequest: Boolean;
+  LevelName: string;
+  MessageOut: TRtmpChunkMessage;
+  Reassembler: TRtmpChunkReassembler;
+  Received: Integer;
+  StatusInfo: TRtmpAmf0Object;
+  TcUrl: string;
+begin
+  RestartServer(1962);
+  FRequestReconnectOnPublish:=True;
+  Connection:=FTransportFactory.CreateClientConnection(
+    TRtmpSocketEndpoint.Create('127.0.0.1', 1962), 3000);
+  Reassembler:=TRtmpChunkReassembler.Create(128);
+  try
+    WriteHandshake(Connection);
+    SendConnect(Connection, 'live', 'rtmp://127.0.0.1:1962/live');
+    SendCreateStream(Connection);
+    SendPublish(Connection, 'reconnect-request-test');
+
+    GotReconnectRequest:=False;
+    Deadline:=RtmpGetTickCount64 + 3000;
+    repeat
+      Received:=Connection.Receive(Buffer, SizeOf(Buffer), 200);
+      if Received > 0 then
+      begin
+        Reassembler.AppendBytes(Buffer, Received);
+        while Reassembler.TryReadMessage(MessageOut) do
+        begin
+          if (MessageOut.MessageType = mtSetChunkSize) AND
+            (Length(MessageOut.Payload) >= 4) then
+            Reassembler.InChunkSize:=
+              (UInt32(MessageOut.Payload[0]) SHL 24) OR
+              (UInt32(MessageOut.Payload[1]) SHL 16) OR
+              (UInt32(MessageOut.Payload[2]) SHL 8) OR
+              UInt32(MessageOut.Payload[3])
+          else if MessageOut.MessageType = mtCommandAMF0 then
+          begin
+            Command:=TRtmpCommandMessage.Create(MessageOut.Payload);
+            try
+              if Command.IsCommand('onStatus') AND
+                (Command.ArgumentCount > 3) AND
+                (Command[3] IS TRtmpAmf0Object) then
+              begin
+                StatusInfo:=TRtmpAmf0Object(Command[3]);
+                Code:=StatusInfo.GetString('code');
+                LevelName:=StatusInfo.GetString('level');
+                TcUrl:=StatusInfo.GetString('tcUrl');
+                GotReconnectRequest:=
+                  SameText(Code, 'NetConnection.Connect.ReconnectRequest') AND
+                  SameText(LevelName, 'status') AND
+                  (TcUrl = '/redirected-live');
+              end;
+            finally
+              Command.Free;
+            end;
+          end;
+        end;
+      end;
+    until GotReconnectRequest OR (RtmpGetTickCount64 >= Deadline);
+
+    AssertTrue('server did not emit a valid reconnect request',
+      GotReconnectRequest);
+    AssertTrue('server reconnect request was not logged',
+      WaitForLog('Sent reconnect request tcUrl=/redirected-live', 1000));
+  finally
+    Connection.Close;
+    Reassembler.Free;
+  end;
+  StopServer;
+end;
+
 procedure TServerCommandFlowSmoke.TestTeardownCommands;
 var
   Connection: IRtmpConnection;
 begin
   RestartServer(1958);
-  Connection := FTransportFactory.CreateClientConnection(
+  Connection:=FTransportFactory.CreateClientConnection(
     TRtmpSocketEndpoint.Create('127.0.0.1', 1958), 3000);
   try
     WriteHandshake(Connection);
@@ -685,7 +854,7 @@ var
   Connection: IRtmpConnection;
 begin
   RestartServer(1959);
-  Connection := FTransportFactory.CreateClientConnection(
+  Connection:=FTransportFactory.CreateClientConnection(
     TRtmpSocketEndpoint.Create('127.0.0.1', 1959), 3000);
   try
     WriteHandshake(Connection);
@@ -714,14 +883,14 @@ function TServerCommandFlowSmoke.WaitForActiveSessions(AExpected: Integer;
 var
   Deadline: UInt64;
 begin
-  Deadline := RtmpGetTickCount64 + UInt64(ATimeoutMS);
+  Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
   repeat
-    Result := (FServer <> nil) and (FServer.GetStats.ActiveSessions = AExpected);
+    Result:=(FServer <> nil) AND (FServer.GetStats.ActiveSessions = AExpected);
     if Result then
       Exit;
     Sleep(20);
   until RtmpGetTickCount64 >= Deadline;
-  Result := False;
+  Result:=False;
 end;
 
 function TServerCommandFlowSmoke.WaitForLog(const AFragment: string;
@@ -729,14 +898,14 @@ function TServerCommandFlowSmoke.WaitForLog(const AFragment: string;
 var
   Deadline: UInt64;
 begin
-  Deadline := RtmpGetTickCount64 + UInt64(ATimeoutMS);
+  Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
   repeat
-    Result := LogContains(AFragment);
+    Result:=LogContains(AFragment);
     if Result then
       Exit;
     Sleep(20);
   until RtmpGetTickCount64 >= Deadline;
-  Result := False;
+  Result:=False;
 end;
 
 procedure TServerCommandFlowSmoke.WriteHandshake(const AConnection: IRtmpConnection);
@@ -746,17 +915,17 @@ var
   S0S1S2: TBytes;
   S1: TBytes;
 begin
-  C0C1 := TRtmpHandshake.BuildC0C1;
+  C0C1:=TRtmpHandshake.BuildC0C1;
   SendRawBytes(AConnection, C0C1);
 
   AssertTrue('expected server handshake response',
     ReadExact(AConnection, 1 + (RTMP_HANDSHAKE_SIZE * 2), 3000, S0S1S2));
   AssertTrue('expected RTMP version in handshake response',
-    (Length(S0S1S2) > 0) and (S0S1S2[0] = RTMP_VERSION));
+    (Length(S0S1S2) > 0) AND (S0S1S2[0] = RTMP_VERSION));
 
   SetLength(S1, RTMP_HANDSHAKE_SIZE);
   Move(S0S1S2[1], S1[0], RTMP_HANDSHAKE_SIZE);
-  C2 := TRtmpHandshake.BuildC2(S1);
+  C2:=TRtmpHandshake.BuildC2(S1);
   SendRawBytes(AConnection, C2);
 end;
 
@@ -764,7 +933,7 @@ var
   Smoke: TServerCommandFlowSmoke;
 
 begin
-  Smoke := TServerCommandFlowSmoke.Create;
+  Smoke:=TServerCommandFlowSmoke.Create;
   try
     Smoke.Run;
   finally

@@ -12,13 +12,13 @@ uses
   {$ENDIF}
   {$ENDIF}
   SysUtils,
-  RtmpCompat,
-  RtmpBuffer,
-  RtmpClient,
-  RtmpPacket,
-  RtmpServer,
-  RtmpServerSession,
-  RtmpTypes;
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.RTMP.Client,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Server,
+  TRTMP.RTMP.Server.Session,
+  TRTMP.RTMP.Types;
 
 type
   TReconnectSmokeApp = class
@@ -42,10 +42,10 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 constructor TReconnectSmokeApp.Create;
@@ -54,29 +54,29 @@ var
   ServerConfig: TRtmpServerConfig;
 begin
   inherited Create;
-  FSourceBuffer := TRtmpCircularBuffer.Create(64, 2 * 1024 * 1024);
-  FServer := TRtmpServer.Create;
-  FClient := TRtmpClient.Create;
-  FPacketsReceived := 0;
-  FPublishStarted := False;
+  FSourceBuffer:=TRtmpCircularBuffer.Create(64, 2 * 1024 * 1024);
+  FServer:=TRtmpServer.Create;
+  FClient:=TRtmpClient.Create;
+  FPacketsReceived:=0;
+  FPublishStarted:=False;
 
-  ServerConfig := DefaultRtmpServerConfig;
-  ServerConfig.BindAddress := '127.0.0.1';
-  ServerConfig.Port := 1942;
-  ServerConfig.BufferMaxPackets := 128;
-  ServerConfig.BufferMaxBytes := 4 * 1024 * 1024;
-  FServer.Config := ServerConfig;
-  FServer.OnData := HandleData;
-  FServer.OnPublishStarted := HandlePublishStarted;
+  ServerConfig:=DefaultRtmpServerConfig;
+  ServerConfig.BindAddress:='127.0.0.1';
+  ServerConfig.Port:=1942;
+  ServerConfig.BufferMaxPackets:=128;
+  ServerConfig.BufferMaxBytes:=4 * 1024 * 1024;
+  FServer.Config:=ServerConfig;
+  FServer.OnData:=HandleData;
+  FServer.OnPublishStarted:=HandlePublishStarted;
 
   FClient.AttachBuffer(FSourceBuffer);
-  ClientConfig := DefaultRtmpClientConfig;
-  ClientConfig.TargetURL := 'rtmp://127.0.0.1:1942/live/test';
-  ClientConfig.ConnectTimeoutMS := 200;
-  ClientConfig.OutChunkSize := 4096;
-  ClientConfig.ReconnectDelayMS := 250;
-  ClientConfig.MaxReconnectDelayMS := 1000;
-  FClient.Config := ClientConfig;
+  ClientConfig:=DefaultRtmpClientConfig;
+  ClientConfig.TargetURL:='rtmp://127.0.0.1:1942/live/test';
+  ClientConfig.ConnectTimeoutMS:=200;
+  ClientConfig.OutChunkSize:=4096;
+  ClientConfig.ReconnectDelayMS:=250;
+  ClientConfig.MaxReconnectDelayMS:=1000;
+  FClient.Config:=ClientConfig;
 end;
 
 destructor TReconnectSmokeApp.Destroy;
@@ -96,28 +96,28 @@ end;
 procedure TReconnectSmokeApp.HandlePublishStarted(Sender: TObject;
   Session: TRtmpServerSession);
 begin
-  FPublishStarted := True;
+  FPublishStarted:=True;
 end;
 
 procedure TReconnectSmokeApp.SeedSourceBuffer;
 var
   Packet: TRtmpPacket;
 begin
-  Packet := TRtmpPacket.Create(mtDataAMF0, 0, 0, 1, 5,
+  Packet:=TRtmpPacket.Create(mtDataAMF0, 0, 0, 1, 5,
     TRtmpSharedPayload.Create(Bytes([$12, 0, 1, 2])), [pfIsMetadata], 0);
   FSourceBuffer.Push(Packet);
 
-  Packet := TRtmpPacket.Create(mtAudio, 0, 0, 1, 4,
+  Packet:=TRtmpPacket.Create(mtAudio, 0, 0, 1, 4,
     TRtmpSharedPayload.Create(Bytes([$AF, $00, $12, $10])),
     [pfIsAudio, pfIsCodecConfig, pfIsSequenceHeader], 1);
   FSourceBuffer.Push(Packet);
 
-  Packet := TRtmpPacket.Create(mtVideo, 0, 0, 1, 6,
+  Packet:=TRtmpPacket.Create(mtVideo, 0, 0, 1, 6,
     TRtmpSharedPayload.Create(Bytes([$17, $00, $00, $00, $00, $01, $64, $00, $1E])),
     [pfIsVideo, pfIsCodecConfig, pfIsSequenceHeader, pfIsKeyframe], 2);
   FSourceBuffer.Push(Packet);
 
-  Packet := TRtmpPacket.Create(mtVideo, 40, 40, 1, 6,
+  Packet:=TRtmpPacket.Create(mtVideo, 40, 40, 1, 6,
     TRtmpSharedPayload.Create(Bytes([$17, $01, $00, $00, $00, $09, $10, $11, $12, $13])),
     [pfIsVideo, pfIsKeyframe], 3);
   FSourceBuffer.Push(Packet);
@@ -134,10 +134,10 @@ begin
     Sleep(1200);
     FServer.Start;
     try
-      Deadline := RtmpGetTickCount64 + 8000;
+      Deadline:=RtmpGetTickCount64 + 8000;
       while RtmpGetTickCount64 < Deadline do
       begin
-        if FPublishStarted and (FPacketsReceived >= 4) then
+        if FPublishStarted AND (FPacketsReceived >= 4) then
           Break;
         Sleep(50);
       end;
@@ -148,8 +148,8 @@ begin
     FClient.Stop;
   end;
 
-  ClientStats := FClient.GetStats;
-  if not FPublishStarted then
+  ClientStats:=FClient.GetStats;
+  if NOT FPublishStarted then
     raise Exception.Create('Reconnect smoke failed: publish did not start');
   if FPacketsReceived < 4 then
     raise Exception.CreateFmt('Reconnect smoke failed: expected >=4 packets, got %d',
@@ -166,7 +166,7 @@ var
   App: TReconnectSmokeApp;
 
 begin
-  App := TReconnectSmokeApp.Create;
+  App:=TReconnectSmokeApp.Create;
   try
     App.Run;
   finally

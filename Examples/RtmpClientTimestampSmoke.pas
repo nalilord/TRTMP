@@ -12,13 +12,13 @@ uses
   {$ENDIF}
   {$ENDIF}
   SysUtils,
-  RtmpCompat,
-  RtmpBuffer,
-  RtmpClient,
-  RtmpPacket,
-  RtmpServer,
-  RtmpServerSession,
-  RtmpTypes;
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.RTMP.Client,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Server,
+  TRTMP.RTMP.Server.Session,
+  TRTMP.RTMP.Types;
 
 type
   TUInt32Array = array of UInt32;
@@ -48,22 +48,22 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 function UInt32ArrayToText(const AValues: TUInt32Array): string;
 var
   I: Integer;
 begin
-  Result := '';
-  for I := 0 to High(AValues) do
+  Result:='';
+  for I:=0 to High(AValues) do
   begin
     if Result <> '' then
-      Result := Result + ',';
-    Result := Result + IntToStr(AValues[I]);
+      Result:=Result + ',';
+    Result:=Result + IntToStr(AValues[I]);
   end;
 end;
 
@@ -76,35 +76,35 @@ var
   I: Integer;
 begin
   inherited Create;
-  FSourceBuffer := TRtmpCircularBuffer.Create(64, 2 * 1024 * 1024);
-  FServer := TRtmpServer.Create;
-  FClient := TRtmpClient.Create;
-  FPublishStarted := False;
-  FCapturedTimestamps := nil;
+  FSourceBuffer:=TRtmpCircularBuffer.Create(64, 2 * 1024 * 1024);
+  FServer:=TRtmpServer.Create;
+  FClient:=TRtmpClient.Create;
+  FPublishStarted:=False;
+  FCapturedTimestamps:=nil;
 
   SetLength(FSourceTimestamps, Length(ASourceTimestamps));
-  for I := 0 to High(ASourceTimestamps) do
-    FSourceTimestamps[I] := ASourceTimestamps[I];
+  for I:=0 to High(ASourceTimestamps) do
+    FSourceTimestamps[I]:=ASourceTimestamps[I];
 
   SetLength(FExpectedTimestamps, Length(AExpectedTimestamps));
-  for I := 0 to High(AExpectedTimestamps) do
-    FExpectedTimestamps[I] := AExpectedTimestamps[I];
+  for I:=0 to High(AExpectedTimestamps) do
+    FExpectedTimestamps[I]:=AExpectedTimestamps[I];
 
-  Config := DefaultRtmpServerConfig;
-  Config.BindAddress := '127.0.0.1';
-  Config.Port := APort;
-  Config.BufferMaxPackets := 128;
-  Config.BufferMaxBytes := 4 * 1024 * 1024;
-  FServer.Config := Config;
-  FServer.OnData := HandleData;
-  FServer.OnPublishStarted := HandlePublishStarted;
+  Config:=DefaultRtmpServerConfig;
+  Config.BindAddress:='127.0.0.1';
+  Config.Port:=APort;
+  Config.BufferMaxPackets:=128;
+  Config.BufferMaxBytes:=4 * 1024 * 1024;
+  FServer.Config:=Config;
+  FServer.OnData:=HandleData;
+  FServer.OnPublishStarted:=HandlePublishStarted;
 
   FClient.AttachBuffer(FSourceBuffer);
-  ClientConfig := DefaultRtmpClientConfig;
-  ClientConfig.TargetURL := Format('rtmp://127.0.0.1:%d/live/test', [APort]);
-  ClientConfig.OutChunkSize := 4096;
-  ClientConfig.TimestampMode := ATimestampMode;
-  FClient.Config := ClientConfig;
+  ClientConfig:=DefaultRtmpClientConfig;
+  ClientConfig.TargetURL:=Format('rtmp://127.0.0.1:%d/live/test', [APort]);
+  ClientConfig.OutChunkSize:=4096;
+  ClientConfig.TimestampMode:=ATimestampMode;
+  FClient.Config:=ClientConfig;
 end;
 
 destructor TTimestampSmokeCase.Destroy;
@@ -119,22 +119,22 @@ procedure TTimestampSmokeCase.AppendCapturedTimestamp(ATimestamp: UInt32);
 var
   Count: Integer;
 begin
-  Count := Length(FCapturedTimestamps);
+  Count:=Length(FCapturedTimestamps);
   SetLength(FCapturedTimestamps, Count + 1);
-  FCapturedTimestamps[Count] := ATimestamp;
+  FCapturedTimestamps[Count]:=ATimestamp;
 end;
 
 procedure TTimestampSmokeCase.HandleData(Sender: TObject; Session: TRtmpServerSession;
   Packet: TRtmpPacket);
 begin
-  if (Packet <> nil) and Packet.HasFlag(pfIsVideo) then
+  if (Packet <> nil) AND Packet.HasFlag(pfIsVideo) then
     AppendCapturedTimestamp(Packet.Timestamp);
 end;
 
 procedure TTimestampSmokeCase.HandlePublishStarted(Sender: TObject;
   Session: TRtmpServerSession);
 begin
-  FPublishStarted := True;
+  FPublishStarted:=True;
 end;
 
 procedure TTimestampSmokeCase.SeedSourceBuffer;
@@ -143,13 +143,13 @@ var
   I: Integer;
   Packet: TRtmpPacket;
 begin
-  for I := 0 to High(FSourceTimestamps) do
+  for I:=0 to High(FSourceTimestamps) do
   begin
-    Flags := [pfIsVideo];
+    Flags:=[pfIsVideo];
     if I = 0 then
       Include(Flags, pfIsKeyframe);
 
-    Packet := TRtmpPacket.Create(mtVideo, FSourceTimestamps[I], 0, 1, 6,
+    Packet:=TRtmpPacket.Create(mtVideo, FSourceTimestamps[I], 0, 1, 6,
       TRtmpSharedPayload.Create(Bytes([$17, $01, $00, $00, Byte(I), $09, $10, $11, $12, $13])),
       Flags, I);
     FSourceBuffer.Push(Packet);
@@ -166,10 +166,10 @@ begin
   try
     FClient.Start;
     try
-      Deadline := RtmpGetTickCount64 + 4000;
+      Deadline:=RtmpGetTickCount64 + 4000;
       while RtmpGetTickCount64 < Deadline do
       begin
-        if FPublishStarted and (Length(FCapturedTimestamps) >= Length(FExpectedTimestamps)) then
+        if FPublishStarted AND (Length(FCapturedTimestamps) >= Length(FExpectedTimestamps)) then
           Break;
         Sleep(50);
       end;
@@ -180,14 +180,14 @@ begin
     FServer.Stop;
   end;
 
-  if not FPublishStarted then
+  if NOT FPublishStarted then
     raise Exception.Create('Timestamp smoke failed: publish did not start');
 
   if Length(FCapturedTimestamps) < Length(FExpectedTimestamps) then
     raise Exception.CreateFmt('Timestamp smoke failed: expected %d packets, got %d',
       [Length(FExpectedTimestamps), Length(FCapturedTimestamps)]);
 
-  for I := 0 to High(FExpectedTimestamps) do
+  for I:=0 to High(FExpectedTimestamps) do
     if FCapturedTimestamps[I] <> FExpectedTimestamps[I] then
       raise Exception.CreateFmt('Timestamp smoke failed: expected [%s] got [%s]',
         [UInt32ArrayToText(FExpectedTimestamps), UInt32ArrayToText(FCapturedTimestamps)]);
@@ -198,7 +198,7 @@ procedure RunCase(const AName: string; APort: Word; ATimestampMode: TRtmpTimesta
 var
   Smoke: TTimestampSmokeCase;
 begin
-  Smoke := TTimestampSmokeCase.Create(APort, ATimestampMode,
+  Smoke:=TTimestampSmokeCase.Create(APort, ATimestampMode,
     ASourceTimestamps, AExpectedTimestamps);
   try
     Smoke.Run;

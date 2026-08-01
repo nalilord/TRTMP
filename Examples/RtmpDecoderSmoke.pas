@@ -8,10 +8,10 @@ program RtmpDecoderSmoke;
 uses
   SysUtils,
   libavutil_error,
-  RtmpDecoder,
-  RtmpDecoderFFmpeg,
-  RtmpPacket,
-  RtmpTypes;
+  TRTMP.RTMP.Decode,
+  TRTMP.RTMP.Decode.FFmpeg,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Types;
 
 const
   AAC_EXTRADATA_HEX =
@@ -49,9 +49,9 @@ const
 function HexNibble(ACh: Char): Integer;
 begin
   case ACh of
-    '0'..'9': Result := Ord(ACh) - Ord('0');
-    'a'..'f': Result := 10 + Ord(ACh) - Ord('a');
-    'A'..'F': Result := 10 + Ord(ACh) - Ord('A');
+    '0'..'9': Result:=Ord(ACh) - Ord('0');
+    'a'..'f': Result:=10 + Ord(ACh) - Ord('a');
+    'A'..'F': Result:=10 + Ord(ACh) - Ord('A');
   else
     raise Exception.CreateFmt('Invalid hex character "%s"', [ACh]);
   end;
@@ -62,27 +62,124 @@ var
   I: Integer;
   Clean: string;
 begin
-  Result := nil;
-  Clean := StringReplace(AHex, ' ', '', [rfReplaceAll]);
-  if (Length(Clean) mod 2) <> 0 then
+  Result:=nil;
+  Clean:=StringReplace(AHex, ' ', '', [rfReplaceAll]);
+  if (Length(Clean) MOD 2) <> 0 then
     raise Exception.Create('Hex string must have an even number of digits');
 
-  SetLength(Result, Length(Clean) div 2);
-  for I := 0 to Length(Result) - 1 do
-    Result[I] := Byte((HexNibble(Clean[(I * 2) + 1]) shl 4) or
+  SetLength(Result, Length(Clean) DIV 2);
+  for I:=0 to Length(Result) - 1 do
+    Result[I]:=Byte((HexNibble(Clean[(I * 2) + 1]) SHL 4) OR
       HexNibble(Clean[(I * 2) + 2]));
+end;
+
+function Bytes(const AValues: array of Byte): TBytes;
+var
+  I: Integer;
+begin
+  Result:=nil;
+  SetLength(Result, Length(AValues));
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 function MakePacket(AMessageType: TRtmpMessageType; ATimestamp, ATimestampDelta: UInt32;
   const APayload: TBytes; const AFlags: TRtmpPacketFlags): TRtmpPacket;
 begin
-  Result := TRtmpPacket.Create(AMessageType, ATimestamp, ATimestampDelta, 1, 6,
+  Result:=TRtmpPacket.Create(AMessageType, ATimestamp, ATimestampDelta, 1, 6,
     TRtmpSharedPayload.Create(APayload), AFlags, 1);
+end;
+
+procedure AppendByte(var ABytes: TBytes; AValue: Byte);
+var
+  Index: Integer;
+begin
+  Index:=Length(ABytes);
+  SetLength(ABytes, Index + 1);
+  ABytes[Index]:=AValue;
+end;
+
+procedure AppendBytes(var ADestination: TBytes; const ASource: TBytes);
+var
+  OldLength: Integer;
+begin
+  if Length(ASource) = 0 then
+    Exit;
+  OldLength:=Length(ADestination);
+  SetLength(ADestination, OldLength + Length(ASource));
+  Move(ASource[0], ADestination[OldLength], Length(ASource));
+end;
+
+procedure AppendTrack(var ABytes: TBytes; const AFourCC: string;
+  ATrackID: Byte; const AData: TBytes);
+var
+  I: Integer;
+begin
+  if Length(AFourCC) <> 4 then
+    raise Exception.Create('Test FourCC must contain four bytes');
+  for I:=1 to 4 do
+    AppendByte(ABytes, Ord(AFourCC[I]));
+  AppendByte(ABytes, ATrackID);
+  AppendByte(ABytes, Byte((Length(AData) SHR 16) AND $FF));
+  AppendByte(ABytes, Byte((Length(AData) SHR 8) AND $FF));
+  AppendByte(ABytes, Byte(Length(AData) AND $FF));
+  AppendBytes(ABytes, AData);
+end;
+
+function MakeVideoMultitrackPayload(APacketType: Byte;
+  const ATrack0Data, ATrack1Data: TBytes): TBytes;
+begin
+  Result:=nil;
+  AppendByte(Result, $96);
+  AppendByte(Result, $20 OR (APacketType AND $0F));
+  AppendTrack(Result, 'avc1', 0, ATrack0Data);
+  AppendTrack(Result, 'avc1', 1, ATrack1Data);
+end;
+
+function MakeAudioMultitrackPayload(APacketType: Byte;
+  const ATrack0Data, ATrack2Data: TBytes): TBytes;
+begin
+  Result:=nil;
+  AppendByte(Result, $95);
+  AppendByte(Result, $20 OR (APacketType AND $0F));
+  AppendTrack(Result, 'mp4a', 0, ATrack0Data);
+  AppendTrack(Result, 'mp4a', 2, ATrack2Data);
+end;
+
+function WithCompositionOffset(const APayload: TBytes): TBytes;
+begin
+  Result:=nil;
+  SetLength(Result, Length(APayload) + 3);
+  Result[0]:=0;
+  Result[1]:=0;
+  Result[2]:=0;
+  if Length(APayload) > 0 then
+    Move(APayload[0], Result[3], Length(APayload));
+end;
+
+function MakeEnhancedVideoConfig(const AExtradata: TBytes): TBytes;
+begin
+  Result:=Bytes([$90, Ord('a'), Ord('v'), Ord('c'), Ord('1')]);
+  AppendBytes(Result, AExtradata);
+end;
+
+function MakeModExVideoFrame(const APayload: TBytes;
+  ATimestampNanoOffset: Integer): TBytes;
+begin
+  Result:=Bytes([
+    $97, $02,
+    Byte((ATimestampNanoOffset SHR 16) AND $FF),
+    Byte((ATimestampNanoOffset SHR 8) AND $FF),
+    Byte(ATimestampNanoOffset AND $FF),
+    $01,
+    Ord('a'), Ord('v'), Ord('c'), Ord('1'),
+    $00, $00, $00]);
+  AppendBytes(Result, APayload);
 end;
 
 procedure AssertTrue(ACondition: Boolean; const AMessage: string);
 begin
-  if not ACondition then
+  if NOT ACondition then
     raise Exception.Create(AMessage);
 end;
 
@@ -92,9 +189,9 @@ var
   Decoder: TRtmpFFmpegPacketDecoder;
   Payload: TBytes;
 begin
-  Payload := HexToBytes('ae00' + AAC_EXTRADATA_HEX);
-  ConfigPacket := MakePacket(mtAudio, 0, 0, Payload, [pfIsAudio, pfIsCodecConfig, pfIsSequenceHeader]);
-  Decoder := TRtmpFFmpegPacketDecoder.Create;
+  Payload:=HexToBytes('ae00' + AAC_EXTRADATA_HEX);
+  ConfigPacket:=MakePacket(mtAudio, 0, 0, Payload, [pfIsAudio, pfIsCodecConfig, pfIsSequenceHeader]);
+  Decoder:=TRtmpFFmpegPacketDecoder.Create;
   try
     AssertTrue(Decoder.OpenFromConfig(ConfigPacket), Decoder.LastErrorText);
     AssertTrue(Decoder.MediaKind = dmAudio, 'Audio decoder media kind mismatch');
@@ -114,18 +211,18 @@ var
   RawPacket: TRtmpPacket;
   ResultCode: Integer;
 begin
-  Payload := HexToBytes('1700000000' + AVC_EXTRADATA_HEX);
-  ConfigPacket := MakePacket(mtVideo, 0, 0, Payload, [pfIsVideo, pfIsCodecConfig, pfIsSequenceHeader, pfIsKeyframe]);
-  Decoder := TRtmpFFmpegPacketDecoder.Create;
+  Payload:=HexToBytes('1700000000' + AVC_EXTRADATA_HEX);
+  ConfigPacket:=MakePacket(mtVideo, 0, 0, Payload, [pfIsVideo, pfIsCodecConfig, pfIsSequenceHeader, pfIsKeyframe]);
+  Decoder:=TRtmpFFmpegPacketDecoder.Create;
   try
     AssertTrue(Decoder.OpenFromConfig(ConfigPacket), Decoder.LastErrorText);
 
-    Payload := HexToBytes('1701000000' + AVC_PACKET_HEX);
-    RawPacket := MakePacket(mtVideo, 21, 200, Payload, [pfIsVideo, pfIsKeyframe]);
+    Payload:=HexToBytes('1701000000' + AVC_PACKET_HEX);
+    RawPacket:=MakePacket(mtVideo, 21, 200, Payload, [pfIsVideo, pfIsKeyframe]);
     try
-      ResultCode := Decoder.SubmitPacket(RawPacket);
+      ResultCode:=Decoder.SubmitPacket(RawPacket);
       AssertTrue(ResultCode >= 0, Decoder.LastErrorText);
-      ResultCode := Decoder.ReceiveFrame(FrameInfo);
+      ResultCode:=Decoder.ReceiveFrame(FrameInfo);
       AssertTrue(ResultCode >= 0, Decoder.LastErrorText);
       AssertTrue(FrameInfo.MediaKind = dmVideo, 'Video decoder returned wrong media kind');
       AssertTrue(FrameInfo.Codec = dcAVC, 'Video decoder returned wrong codec');
@@ -142,8 +239,171 @@ begin
   end;
 end;
 
+procedure TestMultitrackVideoDecode;
+var
+  ConfigPacket: TRtmpPacket;
+  Decoder0: TRtmpFFmpegPacketDecoder;
+  Decoder1: TRtmpFFmpegPacketDecoder;
+  MissingDecoder: TRtmpFFmpegPacketDecoder;
+  Extradata: TBytes;
+  FrameInfo: TRtmpDecodedFrameInfo;
+  Payload: TBytes;
+  RawData: TBytes;
+  RawPacket: TRtmpPacket;
+  ResultCode: Integer;
+  RangeRejected: Boolean;
+begin
+  Extradata:=HexToBytes(AVC_EXTRADATA_HEX);
+  Payload:=MakeVideoMultitrackPayload(0, Extradata, Extradata);
+  ConfigPacket:=MakePacket(mtVideo, 0, 0, Payload,
+    [pfIsVideo, pfIsCodecConfig, pfIsSequenceHeader, pfIsKeyframe]);
+  Decoder0:=TRtmpFFmpegPacketDecoder.Create;
+  Decoder1:=TRtmpFFmpegPacketDecoder.Create;
+  MissingDecoder:=TRtmpFFmpegPacketDecoder.Create;
+  try
+    Decoder1.TrackID:=1;
+    AssertTrue(Decoder0.OpenFromConfig(ConfigPacket), Decoder0.LastErrorText);
+    AssertTrue(Decoder1.OpenFromConfig(ConfigPacket), Decoder1.LastErrorText);
+    AssertTrue(Decoder0.ActiveTrackID = 0,
+      'Automatic multitrack selection did not prefer track zero');
+    AssertTrue(Decoder1.ActiveTrackID = 1,
+      'Explicit multitrack selection did not open track one');
+    AssertTrue((Decoder0.CodecKind = dcAVC) AND (Decoder1.CodecKind = dcAVC),
+      'Enhanced avc1 multitrack mapping failed');
+
+    MissingDecoder.TrackID:=3;
+    AssertTrue(NOT MissingDecoder.OpenFromConfig(ConfigPacket),
+      'Missing explicit track was silently substituted');
+    RangeRejected:=False;
+    try
+      MissingDecoder.TrackID:=256;
+    except
+      on E: ERangeError do
+        RangeRejected:=True;
+    end;
+    AssertTrue(RangeRejected, 'Out-of-range track ID was accepted');
+
+    RawData:=WithCompositionOffset(HexToBytes(AVC_PACKET_HEX));
+    Payload:=MakeVideoMultitrackPayload(1, RawData, RawData);
+    RawPacket:=MakePacket(mtVideo, 21, 21, Payload,
+      [pfIsVideo, pfIsKeyframe]);
+    try
+      ResultCode:=Decoder0.SubmitPacket(RawPacket);
+      AssertTrue(ResultCode >= 0, Decoder0.LastErrorText);
+      ResultCode:=Decoder1.SubmitPacket(RawPacket);
+      AssertTrue(ResultCode >= 0, Decoder1.LastErrorText);
+
+      ResultCode:=Decoder0.ReceiveFrame(FrameInfo);
+      AssertTrue(ResultCode >= 0, Decoder0.LastErrorText);
+      AssertTrue((FrameInfo.TrackID = 0) AND (FrameInfo.Width = 32) AND
+        (FrameInfo.Height = 32), 'Track-zero decoded frame mismatch');
+      Decoder0.UnrefFrame;
+
+      ResultCode:=Decoder1.ReceiveFrame(FrameInfo);
+      AssertTrue(ResultCode >= 0, Decoder1.LastErrorText);
+      AssertTrue((FrameInfo.TrackID = 1) AND (FrameInfo.Width = 32) AND
+        (FrameInfo.Height = 32), 'Track-one decoded frame mismatch');
+      Decoder1.UnrefFrame;
+    finally
+      RawPacket.Free;
+    end;
+
+    Decoder1.TrackID:=0;
+    AssertTrue(NOT Decoder1.IsOpen,
+      'Changing track selection did not close stale decoder state');
+  finally
+    MissingDecoder.Free;
+    Decoder1.Free;
+    Decoder0.Free;
+    ConfigPacket.Free;
+  end;
+end;
+
+procedure TestMultitrackAudioDecode;
+var
+  ConfigPacket: TRtmpPacket;
+  Decoder: TRtmpFFmpegPacketDecoder;
+  Extradata: TBytes;
+  FrameInfo: TRtmpDecodedFrameInfo;
+  Payload: TBytes;
+  RawData: TBytes;
+  RawPacket: TRtmpPacket;
+  ResultCode: Integer;
+begin
+  Extradata:=HexToBytes(AAC_EXTRADATA_HEX);
+  Payload:=MakeAudioMultitrackPayload(0, Extradata, Extradata);
+  ConfigPacket:=MakePacket(mtAudio, 0, 0, Payload,
+    [pfIsAudio, pfIsCodecConfig, pfIsSequenceHeader]);
+  Decoder:=TRtmpFFmpegPacketDecoder.Create;
+  try
+    Decoder.TrackID:=2;
+    AssertTrue(Decoder.OpenFromConfig(ConfigPacket), Decoder.LastErrorText);
+    AssertTrue((Decoder.ActiveTrackID = 2) AND (Decoder.CodecKind = dcAAC),
+      'Enhanced mp4a track selection failed');
+
+    RawData:=HexToBytes(AAC_PACKET_HEX);
+    Payload:=MakeAudioMultitrackPayload(1, RawData, RawData);
+    RawPacket:=MakePacket(mtAudio, 21, 21, Payload, [pfIsAudio]);
+    try
+      ResultCode:=Decoder.SubmitPacket(RawPacket);
+      AssertTrue(ResultCode >= 0, Decoder.LastErrorText);
+      ResultCode:=Decoder.ReceiveFrame(FrameInfo);
+      AssertTrue(ResultCode >= 0, Decoder.LastErrorText);
+      AssertTrue((FrameInfo.TrackID = 2) AND (FrameInfo.Codec = dcAAC) AND
+        (FrameInfo.SampleCount > 0), 'Track-two decoded audio frame mismatch');
+      Decoder.UnrefFrame;
+    finally
+      RawPacket.Free;
+    end;
+  finally
+    Decoder.Free;
+    ConfigPacket.Free;
+  end;
+end;
+
+procedure TestModExNanoTimestampDecode;
+var
+  ConfigPacket: TRtmpPacket;
+  Decoder: TRtmpFFmpegPacketDecoder;
+  FrameInfo: TRtmpDecodedFrameInfo;
+  Payload: TBytes;
+  RawPacket: TRtmpPacket;
+  ResultCode: Integer;
+begin
+  Payload:=MakeEnhancedVideoConfig(HexToBytes(AVC_EXTRADATA_HEX));
+  ConfigPacket:=MakePacket(mtVideo, 0, 0, Payload,
+    [pfIsVideo, pfIsCodecConfig, pfIsSequenceHeader, pfIsKeyframe]);
+  Decoder:=TRtmpFFmpegPacketDecoder.Create;
+  try
+    AssertTrue(Decoder.OpenFromConfig(ConfigPacket), Decoder.LastErrorText);
+    Payload:=MakeModExVideoFrame(HexToBytes(AVC_PACKET_HEX), 482);
+    RawPacket:=MakePacket(mtVideo, 21, 21, Payload,
+      [pfIsVideo, pfIsKeyframe]);
+    try
+      ResultCode:=Decoder.SubmitPacket(RawPacket);
+      AssertTrue(ResultCode >= 0, Decoder.LastErrorText);
+      ResultCode:=Decoder.ReceiveFrame(FrameInfo);
+      AssertTrue(ResultCode >= 0, Decoder.LastErrorText);
+      AssertTrue(FrameInfo.TimestampNS = 21000482,
+        'ModEx nanosecond timestamp was not preserved through decode');
+      AssertTrue((FrameInfo.TimestampMS = 21) AND
+        (FrameInfo.TimestampNanoOffset = 482),
+        'Decoded ModEx timestamp fields mismatch');
+      Decoder.UnrefFrame;
+    finally
+      RawPacket.Free;
+    end;
+  finally
+    Decoder.Free;
+    ConfigPacket.Free;
+  end;
+end;
+
 begin
   TestAudioConfigOpen;
   TestVideoDecode;
-  WriteLn('Decoder smoke passed: AAC config-open and AVC decode paths are operational.');
+  TestMultitrackVideoDecode;
+  TestMultitrackAudioDecode;
+  TestModExNanoTimestampDecode;
+  WriteLn('Decoder smoke passed: AAC, AVC, and independent multitrack decode paths are operational.');
 end.

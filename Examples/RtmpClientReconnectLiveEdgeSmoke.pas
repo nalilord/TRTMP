@@ -13,24 +13,28 @@ uses
   {$ENDIF}
   Classes,
   SysUtils,
-  RtmpAmf0,
-  RtmpCompat,
-  RtmpBuffer,
-  RtmpBytes,
-  RtmpChunkReassembler,
-  RtmpClient,
-  RtmpCommand,
-  RtmpPacket,
-  RtmpProtocol,
-  RtmpTransport,
-  RtmpTransportNative,
-  RtmpTypes;
+  TRTMP.RTMP.Protocol.AMF0,
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.Core.Bytes,
+  TRTMP.RTMP.Protocol.Chunk,
+  TRTMP.RTMP.Client,
+  TRTMP.RTMP.Protocol.Command,
+  TRTMP.RTMP.Protocol.FLV,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Protocol.Core,
+  TRTMP.Transport,
+  TRTMP.Transport.Native,
+  TRTMP.RTMP.Types;
 
 type
   TLiveEdgeTargetThread = class(TThread)
   private
     FFirstVideoTimestamps: array[0..1] of UInt32;
+    FConfigSeen: array[0..1] of Boolean;
+    FFirstFrameHadConfig: array[0..1] of Boolean;
     FLastError: string;
+    FReconnectRequestSent: Boolean;
     FListener: IRtmpListener;
     FTransportFactory: IRtmpTransportFactory;
     function BuildObject(const APairs: array of const): TRtmpAmf0Object;
@@ -47,6 +51,7 @@ type
       ATransactionID: Double);
     procedure SendProtocolDefaults(const AConnection: IRtmpConnection);
     procedure SendPublishStart(const AConnection: IRtmpConnection);
+    procedure SendReconnectRequest(const AConnection: IRtmpConnection);
     procedure SendRawBytes(const AConnection: IRtmpConnection; const ABytes: TBytes);
     procedure SendRtmpMessage(const AConnection: IRtmpConnection; AChunkStreamID,
       AMessageStreamID: UInt32; AMessageTypeID: Byte; ATimestamp: UInt32;
@@ -63,6 +68,7 @@ type
     constructor Create(APort: Word);
     destructor Destroy; override;
     function FirstVideoTimestamp(AIndex: Integer): UInt32;
+    function FirstFrameHadConfig(AIndex: Integer): Boolean;
     property LastError: string read FLastError;
   end;
 
@@ -87,21 +93,26 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 constructor TLiveEdgeTargetThread.Create(APort: Word);
 begin
   inherited Create(True);
-  FreeOnTerminate := False;
-  FLastError := '';
-  FFirstVideoTimestamps[0] := High(UInt32);
-  FFirstVideoTimestamps[1] := High(UInt32);
-  FTransportFactory := TRtmpNativeTransportFactory.Create;
-  FListener := FTransportFactory.CreateListener(
+  FreeOnTerminate:=False;
+  FLastError:='';
+  FReconnectRequestSent:=False;
+  FFirstVideoTimestamps[0]:=High(UInt32);
+  FFirstVideoTimestamps[1]:=High(UInt32);
+  FConfigSeen[0]:=False;
+  FConfigSeen[1]:=False;
+  FFirstFrameHadConfig[0]:=False;
+  FFirstFrameHadConfig[1]:=False;
+  FTransportFactory:=TRtmpNativeTransportFactory.Create;
+  FListener:=FTransportFactory.CreateListener(
     TRtmpSocketEndpoint.Create('127.0.0.1', APort), 4);
 end;
 
@@ -118,24 +129,24 @@ var
   I: Integer;
   KeyName: string;
 begin
-  if (Length(APairs) mod 2) <> 0 then
+  if (Length(APairs) MOD 2) <> 0 then
     raise Exception.Create('BuildObject expects name/value pairs');
 
-  Result := TRtmpAmf0Object.Create;
-  I := 0;
+  Result:=TRtmpAmf0Object.Create;
+  I:=0;
   while I < Length(APairs) do
   begin
     case APairs[I].VType of
       vtAnsiString:
-        KeyName := string(AnsiString(APairs[I].VAnsiString));
+        KeyName:=string(AnsiString(APairs[I].VAnsiString));
       vtPChar:
-        KeyName := string(APairs[I].VPChar);
+        KeyName:=string(APairs[I].VPChar);
       vtChar:
-        KeyName := string(APairs[I].VChar);
+        KeyName:=string(APairs[I].VChar);
       vtString:
-        KeyName := string(APairs[I].VString^);
+        KeyName:=string(APairs[I].VString^);
       vtUnicodeString:
-        KeyName := string(UnicodeString(APairs[I].VUnicodeString));
+        KeyName:=string(UnicodeString(APairs[I].VUnicodeString));
     else
       raise Exception.Create('BuildObject key must be a string');
     end;
@@ -174,13 +185,13 @@ var
   Connection: IRtmpConnection;
   SessionIndex: Integer;
 begin
-  SessionIndex := 0;
-  while (not Terminated) and (SessionIndex < 2) do
+  SessionIndex:=0;
+  while (NOT Terminated) AND (SessionIndex < 2) do
   begin
     if FListener = nil then
       Break;
 
-    Connection := FListener.Accept(200);
+    Connection:=FListener.Accept(200);
     if Connection = nil then
       Continue;
 
@@ -189,7 +200,7 @@ begin
     except
       on E: Exception do
       begin
-        FLastError := E.Message;
+        FLastError:=E.Message;
         Break;
       end;
     end;
@@ -200,9 +211,17 @@ end;
 
 function TLiveEdgeTargetThread.FirstVideoTimestamp(AIndex: Integer): UInt32;
 begin
-  if (AIndex < Low(FFirstVideoTimestamps)) or (AIndex > High(FFirstVideoTimestamps)) then
+  if (AIndex < Low(FFirstVideoTimestamps)) OR (AIndex > High(FFirstVideoTimestamps)) then
     Exit(High(UInt32));
-  Result := FFirstVideoTimestamps[AIndex];
+  Result:=FFirstVideoTimestamps[AIndex];
+end;
+
+function TLiveEdgeTargetThread.FirstFrameHadConfig(AIndex: Integer): Boolean;
+begin
+  if (AIndex < Low(FFirstFrameHadConfig)) OR
+    (AIndex > High(FFirstFrameHadConfig)) then
+    Exit(False);
+  Result:=FFirstFrameHadConfig[AIndex];
 end;
 
 function TLiveEdgeTargetThread.ReadExact(const AConnection: IRtmpConnection;
@@ -211,17 +230,17 @@ var
   Offset: Integer;
   Received: Integer;
 begin
-  Result := False;
-  Offset := 0;
+  Result:=False;
+  Offset:=0;
   SetLength(ABytes, ACount);
   while Offset < ACount do
   begin
-    Received := AConnection.Receive(ABytes[Offset], ACount - Offset, ATimeoutMS);
+    Received:=AConnection.Receive(ABytes[Offset], ACount - Offset, ATimeoutMS);
     if Received <= 0 then
       Exit(False);
     Inc(Offset, Received);
   end;
-  Result := True;
+  Result:=True;
 end;
 
 function TLiveEdgeTargetThread.ReadOneOrMoreBytes(const AConnection: IRtmpConnection;
@@ -230,14 +249,14 @@ var
   Buffer: array[0..8191] of Byte;
   Received: Integer;
 begin
-  Result := False;
-  ABytes := nil;
-  Received := AConnection.Receive(Buffer, SizeOf(Buffer), ATimeoutMS);
+  Result:=False;
+  ABytes:=nil;
+  Received:=AConnection.Receive(Buffer, SizeOf(Buffer), ATimeoutMS);
   if Received <= 0 then
     Exit(False);
   SetLength(ABytes, Received);
   Move(Buffer[0], ABytes[0], Received);
-  Result := True;
+  Result:=True;
 end;
 
 procedure TLiveEdgeTargetThread.RunOneSession(const AConnection: IRtmpConnection;
@@ -251,24 +270,24 @@ var
   Reassembler: TRtmpChunkReassembler;
   S0S1S2: TBytes;
 begin
-  if not ReadExact(AConnection, 1 + RTMP_HANDSHAKE_SIZE, 3000, C0C1) then
+  if NOT ReadExact(AConnection, 1 + RTMP_HANDSHAKE_SIZE, 3000, C0C1) then
     Exit;
   if C0C1[0] <> RTMP_VERSION then
     Exit;
 
   SetLength(BytesIn, RTMP_HANDSHAKE_SIZE);
   Move(C0C1[1], BytesIn[0], RTMP_HANDSHAKE_SIZE);
-  S0S1S2 := TRtmpHandshake.BuildS0S1S2(BytesIn);
+  S0S1S2:=TRtmpHandshake.BuildS0S1S2(BytesIn);
   SendRawBytes(AConnection, S0S1S2);
-  if not ReadExact(AConnection, RTMP_HANDSHAKE_SIZE, 3000, C2) then
+  if NOT ReadExact(AConnection, RTMP_HANDSHAKE_SIZE, 3000, C2) then
     Exit;
 
   SendProtocolDefaults(AConnection);
-  Reassembler := TRtmpChunkReassembler.Create(4096);
+  Reassembler:=TRtmpChunkReassembler.Create(4096);
   try
-    while not Terminated do
+    while NOT Terminated do
     begin
-      if not ReadOneOrMoreBytes(AConnection, 3000, BytesIn) then
+      if NOT ReadOneOrMoreBytes(AConnection, 3000, BytesIn) then
         Exit;
 
       Reassembler.AppendBytes(BytesIn);
@@ -278,12 +297,12 @@ begin
           mtSetChunkSize:
             begin
               if Length(MessageOut.Payload) >= 4 then
-                Reassembler.InChunkSize := TRtmpByteReader.Create(
+                Reassembler.InChunkSize:=TRtmpByteReader.Create(
                   MessageOut.Payload).ReadUInt32BE;
             end;
           mtCommandAMF0:
             begin
-              Command := TRtmpCommandMessage.Create(MessageOut.Payload);
+              Command:=TRtmpCommandMessage.Create(MessageOut.Payload);
               try
                 if Command.IsCommand('connect') then
                   SendConnectResult(AConnection, Command.TransactionID)
@@ -296,13 +315,32 @@ begin
               end;
             end;
           mtVideo:
-            if (Length(MessageOut.Payload) > 1) and
-              (MessageOut.Payload[1] = $01) and
+            if (Length(MessageOut.Payload) >= 5) AND
+              ((MessageOut.Payload[0] AND $80) <> 0) AND
+              ((MessageOut.Payload[0] AND $0F) = 0) AND
+              (MessageOut.Payload[1] = Ord('h')) AND
+              (MessageOut.Payload[2] = Ord('v')) AND
+              (MessageOut.Payload[3] = Ord('c')) AND
+              (MessageOut.Payload[4] = Ord('1')) then
+              FConfigSeen[ASessionIndex]:=True
+            else if (Length(MessageOut.Payload) >= 5) AND
+              ((MessageOut.Payload[0] AND $80) <> 0) AND
+              ((MessageOut.Payload[0] AND $0F) IN [1, 3]) AND
+              (((MessageOut.Payload[0] SHR 4) AND $07) = 1) AND
               (FFirstVideoTimestamps[ASessionIndex] = High(UInt32)) then
             begin
-              FFirstVideoTimestamps[ASessionIndex] := MessageOut.Timestamp;
-              AConnection.Close;
-              Exit;
+              FFirstVideoTimestamps[ASessionIndex]:=MessageOut.Timestamp;
+              FFirstFrameHadConfig[ASessionIndex]:=FConfigSeen[ASessionIndex];
+              if (ASessionIndex = 0) AND (NOT FReconnectRequestSent) then
+              begin
+                FReconnectRequestSent:=True;
+                SendReconnectRequest(AConnection);
+              end
+              else if ASessionIndex = 1 then
+              begin
+                AConnection.Close;
+                Exit;
+              end;
             end;
         end;
       end;
@@ -323,14 +361,14 @@ var
   Values: TRtmpAmf0ValueList;
 begin
   SetLength(TempValues, Length(AValues));
-  for I := 0 to High(AValues) do
-    TempValues[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    TempValues[I]:=AValues[I];
 
-  Values := TRtmpAmf0ValueList.Create(True);
+  Values:=TRtmpAmf0ValueList.Create(True);
   try
-    for I := 0 to High(TempValues) do
+    for I:=0 to High(TempValues) do
       Values.AddValue(TRtmpAmf0Value(TempValues[I]).Clone);
-    Payload := TRtmpAmf0.EncodeValues(Values);
+    Payload:=TRtmpAmf0.EncodeValues(Values);
   finally
     Values.Free;
   end;
@@ -345,11 +383,12 @@ var
   ServerInfo: TRtmpAmf0Object;
   StatusInfo: TRtmpAmf0Object;
 begin
-  ServerInfo := BuildObject([
+  ServerInfo:=BuildObject([
     'fmsVer', 'FMS/3,5,1,516',
-    'capabilities', 31
+    'capabilities', 31,
+    'capsEx', RTMP_DEFAULT_ENHANCED_CAPABILITIES
   ]);
-  StatusInfo := BuildObject([
+  StatusInfo:=BuildObject([
     'level', 'status',
     'code', 'NetConnection.Connect.Success',
     'description', 'Connection succeeded.',
@@ -364,6 +403,29 @@ begin
     ]);
   finally
     ServerInfo.Free;
+    StatusInfo.Free;
+  end;
+end;
+
+procedure TLiveEdgeTargetThread.SendReconnectRequest(
+  const AConnection: IRtmpConnection);
+var
+  StatusInfo: TRtmpAmf0Object;
+begin
+  StatusInfo:=BuildObject([
+    'level', 'status',
+    'code', 'NetConnection.Connect.ReconnectRequest',
+    'description', 'Reconnect smoke redirect',
+    'tcUrl', '/live'
+  ]);
+  try
+    SendCommandMessage(AConnection, 3, 0, [
+      TRtmpAmf0String.Create('onStatus'),
+      TRtmpAmf0Number.Create(0),
+      TRtmpAmf0Null.Create,
+      StatusInfo
+    ]);
+  finally
     StatusInfo.Free;
   end;
 end;
@@ -392,7 +454,7 @@ var
   StatusInfo: TRtmpAmf0Object;
 begin
   SendUserControl(AConnection, Ord(ucStreamBegin), 1);
-  StatusInfo := BuildObject([
+  StatusInfo:=BuildObject([
     'level', 'status',
     'code', 'NetStream.Publish.Start',
     'description', 'Publish started'
@@ -415,10 +477,10 @@ var
   Offset: Integer;
   Sent: Integer;
 begin
-  Offset := 0;
+  Offset:=0;
   while Offset < Length(ABytes) do
   begin
-    Sent := AConnection.Send(ABytes[Offset], Length(ABytes) - Offset, 3000);
+    Sent:=AConnection.Send(ABytes[Offset], Length(ABytes) - Offset, 3000);
     if Sent <= 0 then
       raise Exception.Create('Socket send failed');
     Inc(Offset, Sent);
@@ -434,17 +496,17 @@ var
   Header: TRtmpChunkMessageHeader;
   Writer: TRtmpByteWriter;
 begin
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType0;
-  Header.Timestamp := ATimestamp;
-  Header.MessageLength := Length(APayload);
-  Header.MessageTypeID := AMessageTypeID;
-  Header.MessageStreamID := AMessageStreamID;
-  Header.HasExtendedTimestamp := ATimestamp >= RTMP_TIMESTAMP_EXTENDED;
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType0;
+  Header.Timestamp:=ATimestamp;
+  Header.MessageLength:=Length(APayload);
+  Header.MessageTypeID:=AMessageTypeID;
+  Header.MessageStreamID:=AMessageStreamID;
+  Header.HasExtendedTimestamp:=ATimestamp >= RTMP_TIMESTAMP_EXTENDED;
 
-  Writer := TRtmpByteWriter.Create(4128);
+  Writer:=TRtmpByteWriter.Create(4128);
   try
-    ChunkOffset := 0;
+    ChunkOffset:=0;
     while ChunkOffset < Length(APayload) do
     begin
       Writer.Clear;
@@ -460,9 +522,9 @@ begin
           WriteChunkMessageHeader(Writer, Header);
       end;
 
-      ChunkSize := Length(APayload) - ChunkOffset;
+      ChunkSize:=Length(APayload) - ChunkOffset;
       if ChunkSize > 4096 then
-        ChunkSize := 4096;
+        ChunkSize:=4096;
 
       Writer.WriteBytesRange(APayload, ChunkOffset, ChunkSize);
       SendRawBytes(AConnection, Writer.ToBytes);
@@ -478,7 +540,7 @@ procedure TLiveEdgeTargetThread.SendSetChunkSize(const AConnection: IRtmpConnect
 var
   Writer: TRtmpByteWriter;
 begin
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     Writer.WriteUInt32BE(AChunkSize);
     SendRtmpMessage(AConnection, 2, 0, RtmpMessageTypeID(mtSetChunkSize), 0,
@@ -493,7 +555,7 @@ procedure TLiveEdgeTargetThread.SendSetPeerBandwidth(
 var
   Writer: TRtmpByteWriter;
 begin
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     Writer.WriteUInt32BE(AValue);
     Writer.WriteUInt8(ALimitType);
@@ -509,7 +571,7 @@ procedure TLiveEdgeTargetThread.SendUserControl(const AConnection: IRtmpConnecti
 var
   Writer: TRtmpByteWriter;
 begin
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     Writer.WriteUInt16BE(AEventType);
     Writer.WriteUInt32BE(AValue1);
@@ -525,7 +587,7 @@ procedure TLiveEdgeTargetThread.SendWindowAckSize(
 var
   Writer: TRtmpByteWriter;
 begin
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     Writer.WriteUInt32BE(AValue);
     SendRtmpMessage(AConnection, 2, 0, RtmpMessageTypeID(mtWindowAckSize), 0,
@@ -540,19 +602,19 @@ var
   ClientConfig: TRtmpClientConfig;
 begin
   inherited Create;
-  FClient := TRtmpClient.Create;
-  FNextSequenceNo := 0;
-  FSourceBuffer := TRtmpCircularBuffer.Create(256, 8 * 1024 * 1024);
-  FTarget := TLiveEdgeTargetThread.Create(1944);
+  FClient:=TRtmpClient.Create;
+  FNextSequenceNo:=0;
+  FSourceBuffer:=TRtmpCircularBuffer.Create(256, 8 * 1024 * 1024);
+  FTarget:=TLiveEdgeTargetThread.Create(1944);
   FTarget.Start;
 
   FClient.AttachBuffer(FSourceBuffer);
-  ClientConfig := DefaultRtmpClientConfig;
-  ClientConfig.TargetURL := 'rtmp://127.0.0.1:1944/live/test';
-  ClientConfig.OutChunkSize := 4096;
-  ClientConfig.ReconnectDelayMS := 200;
-  ClientConfig.MaxReconnectDelayMS := 500;
-  FClient.Config := ClientConfig;
+  ClientConfig:=DefaultRtmpClientConfig;
+  ClientConfig.TargetURL:='rtmp://127.0.0.1:1944/live/test';
+  ClientConfig.OutChunkSize:=4096;
+  ClientConfig.ReconnectDelayMS:=200;
+  ClientConfig.MaxReconnectDelayMS:=500;
+  FClient.Config:=ClientConfig;
 end;
 
 destructor TReconnectLiveEdgeSmokeApp.Destroy;
@@ -571,34 +633,45 @@ end;
 procedure TReconnectLiveEdgeSmokeApp.PushOutagePackets;
 begin
   PushPacket(mtVideo, 1000, 6,
-    [$27, $01, $00, $00, $00, $21, $22, $23, $24], [pfIsVideo]);
+    [$A1, Ord('h'), Ord('v'), Ord('c'), Ord('1'), $00, $00, $00,
+     $21, $22, $23, $24], [pfIsVideo]);
   PushPacket(mtAudio, 1000, 4,
     [$AF, $01, $31, $32], [pfIsAudio]);
   PushPacket(mtVideo, 2000, 6,
-    [$17, $01, $00, $00, $00, $41, $42, $43, $44], [pfIsVideo, pfIsKeyframe]);
+    [$91, Ord('h'), Ord('v'), Ord('c'), Ord('1'), $00, $00, $00,
+     $41, $42, $43, $44], [pfIsVideo, pfIsKeyframe]);
   PushPacket(mtAudio, 2000, 4,
     [$AF, $01, $33, $34], [pfIsAudio]);
   PushPacket(mtVideo, 2040, 6,
-    [$27, $01, $00, $00, $00, $45, $46, $47, $48], [pfIsVideo]);
+    [$A1, Ord('h'), Ord('v'), Ord('c'), Ord('1'), $00, $00, $00,
+     $45, $46, $47, $48], [pfIsVideo]);
   PushPacket(mtVideo, 2080, 6,
-    [$27, $01, $00, $00, $00, $49, $4A, $4B, $4C], [pfIsVideo]);
+    [$A1, Ord('h'), Ord('v'), Ord('c'), Ord('1'), $00, $00, $00,
+     $49, $4A, $4B, $4C], [pfIsVideo]);
   PushPacket(mtVideo, 4000, 6,
-    [$17, $01, $00, $00, $00, $61, $62, $63, $64], [pfIsVideo, pfIsKeyframe]);
+    [$91, Ord('h'), Ord('v'), Ord('c'), Ord('1'), $00, $00, $00,
+     $61, $62, $63, $64], [pfIsVideo, pfIsKeyframe]);
   PushPacket(mtAudio, 4000, 4,
     [$AF, $01, $35, $36], [pfIsAudio]);
   PushPacket(mtVideo, 4040, 6,
-    [$27, $01, $00, $00, $00, $65, $66, $67, $68], [pfIsVideo]);
+    [$A1, Ord('h'), Ord('v'), Ord('c'), Ord('1'), $00, $00, $00,
+     $65, $66, $67, $68], [pfIsVideo]);
   PushPacket(mtVideo, 4080, 6,
-    [$27, $01, $00, $00, $00, $69, $6A, $6B, $6C], [pfIsVideo]);
+    [$A1, Ord('h'), Ord('v'), Ord('c'), Ord('1'), $00, $00, $00,
+     $69, $6A, $6B, $6C], [pfIsVideo]);
 end;
 
 procedure TReconnectLiveEdgeSmokeApp.PushPacket(AMessageType: TRtmpMessageType;
   ATimestamp: UInt32; AChunkStreamID: UInt32; const APayloadBytes: array of Byte;
   AFlags: TRtmpPacketFlags);
 var
+  Info: TRtmpFlvTagInfo;
   Packet: TRtmpPacket;
 begin
-  Packet := TRtmpPacket.Create(AMessageType, ATimestamp, ATimestamp, 1,
+  Info:=Default(TRtmpFlvTagInfo);
+  if RtmpInspectFlvTag(AMessageType, Bytes(APayloadBytes), Info) then
+    AFlags:=RtmpPacketFlagsFromFlvTag(AMessageType, Info, False);
+  Packet:=TRtmpPacket.Create(AMessageType, ATimestamp, ATimestamp, 1,
     AChunkStreamID, TRtmpSharedPayload.Create(Bytes(APayloadBytes)), AFlags,
     FNextSequenceNo);
   Inc(FNextSequenceNo);
@@ -612,10 +685,11 @@ begin
   PushPacket(mtAudio, 0, 4,
     [$AF, $00, $12, $10], [pfIsAudio, pfIsCodecConfig, pfIsSequenceHeader]);
   PushPacket(mtVideo, 0, 6,
-    [$17, $00, $00, $00, $00, $01, $64, $00, $1E],
+    [$90, Ord('h'), Ord('v'), Ord('c'), Ord('1'), $01, $64, $00, $1E],
     [pfIsVideo, pfIsCodecConfig, pfIsSequenceHeader, pfIsKeyframe]);
   PushPacket(mtVideo, 40, 6,
-    [$17, $01, $00, $00, $00, $09, $10, $11, $12, $13],
+    [$91, Ord('h'), Ord('v'), Ord('c'), Ord('1'), $00, $00, $00,
+     $09, $10, $11, $12, $13],
     [pfIsVideo, pfIsKeyframe]);
 end;
 
@@ -627,7 +701,7 @@ begin
   SeedBootstrap;
   FClient.Start;
   try
-    Deadline := RtmpGetTickCount64 + 4000;
+    Deadline:=RtmpGetTickCount64 + 4000;
     while RtmpGetTickCount64 < Deadline do
     begin
       if FTarget.FirstVideoTimestamp(0) <> High(UInt32) then
@@ -643,10 +717,13 @@ begin
       raise Exception.CreateFmt(
         'Reconnect live-edge smoke failed: expected initial video timestamp 40, got %d',
         [FTarget.FirstVideoTimestamp(0)]);
+    if NOT FTarget.FirstFrameHadConfig(0) then
+      raise Exception.Create(
+        'Reconnect live-edge smoke failed: initial enhanced keyframe lacked hvc1 config');
 
     PushOutagePackets;
 
-    Deadline := RtmpGetTickCount64 + 8000;
+    Deadline:=RtmpGetTickCount64 + 8000;
     while RtmpGetTickCount64 < Deadline do
     begin
       if FTarget.FirstVideoTimestamp(1) <> High(UInt32) then
@@ -661,28 +738,35 @@ begin
     raise Exception.CreateFmt('Reconnect live-edge smoke target failed: %s',
       [FTarget.LastError]);
 
-  ClientStats := FClient.GetStats;
+  ClientStats:=FClient.GetStats;
   if FTarget.FirstVideoTimestamp(1) = High(UInt32) then
     raise Exception.Create('Reconnect live-edge smoke failed: reconnect publish did not start');
   if FTarget.FirstVideoTimestamp(1) <> 4000 then
     raise Exception.CreateFmt(
       'Reconnect live-edge smoke failed: expected reconnect timestamp 4000, got %d',
       [FTarget.FirstVideoTimestamp(1)]);
+  if NOT FTarget.FirstFrameHadConfig(1) then
+    raise Exception.Create(
+      'Reconnect live-edge smoke failed: reconnect keyframe lacked retained hvc1 config');
   if ClientStats.Reconnects = 0 then
     raise Exception.Create(
       'Reconnect live-edge smoke failed: reconnect counter did not advance');
+  if ClientStats.ReconnectRequests <> 1 then
+    raise Exception.CreateFmt(
+      'Reconnect live-edge smoke failed: expected one reconnect request, got %d',
+      [ClientStats.ReconnectRequests]);
 
   WriteLn(Format(
-    'Reconnect live-edge smoke passed: firstSessionTs=%d reconnectTs=%d reconnects=%d',
+    'Enhanced reconnect-request live-edge smoke passed: firstSessionTs=%d reconnectTs=%d reconnects=%d requests=%d',
     [FTarget.FirstVideoTimestamp(0), FTarget.FirstVideoTimestamp(1),
-     ClientStats.Reconnects]));
+     ClientStats.Reconnects, ClientStats.ReconnectRequests]));
 end;
 
 var
   App: TReconnectLiveEdgeSmokeApp;
 
 begin
-  App := TReconnectLiveEdgeSmokeApp.Create;
+  App:=TReconnectLiveEdgeSmokeApp.Create;
   try
     App.Run;
   finally

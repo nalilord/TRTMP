@@ -12,12 +12,12 @@ uses
   {$ENDIF}
   {$ENDIF}
   SysUtils,
-  RtmpBuffer,
-  RtmpClient,
-  RtmpPacket,
-  RtmpServer,
-  RtmpServerSession,
-  RtmpTypes;
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.RTMP.Client,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Server,
+  TRTMP.RTMP.Server.Session,
+  TRTMP.RTMP.Types;
 
 type
   TSmallBudgetSmokeApp = class
@@ -47,10 +47,10 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 constructor TSmallBudgetSmokeApp.Create;
@@ -59,30 +59,30 @@ var
   Config: TRtmpServerConfig;
 begin
   inherited Create;
-  FSourceBuffer := TRtmpCircularBuffer.Create(256, 2 * 1024 * 1024);
-  FServer := TRtmpServer.Create;
-  FClient := TRtmpClient.Create;
-  FBufferWarningSeen := False;
-  FPacketsReceived := 0;
-  FPublishStarted := False;
-  FSequenceNo := 0;
+  FSourceBuffer:=TRtmpCircularBuffer.Create(256, 2 * 1024 * 1024);
+  FServer:=TRtmpServer.Create;
+  FClient:=TRtmpClient.Create;
+  FBufferWarningSeen:=False;
+  FPacketsReceived:=0;
+  FPublishStarted:=False;
+  FSequenceNo:=0;
 
-  Config := DefaultRtmpServerConfig;
-  Config.BindAddress := '127.0.0.1';
-  Config.Port := 1942;
-  Config.BufferMaxPackets := 6;
-  Config.BufferMaxBytes := 2048;
-  Config.BufferMaxDurationMS := 120;
-  FServer.Config := Config;
-  FServer.LogSink.OnLog := HandleLog;
-  FServer.OnData := HandleData;
-  FServer.OnPublishStarted := HandlePublishStarted;
+  Config:=DefaultRtmpServerConfig;
+  Config.BindAddress:='127.0.0.1';
+  Config.Port:=1942;
+  Config.BufferMaxPackets:=6;
+  Config.BufferMaxBytes:=2048;
+  Config.BufferMaxDurationMS:=120;
+  FServer.Config:=Config;
+  FServer.LogSink.OnLog:=HandleLog;
+  FServer.OnData:=HandleData;
+  FServer.OnPublishStarted:=HandlePublishStarted;
 
   FClient.AttachBuffer(FSourceBuffer);
-  ClientConfig := DefaultRtmpClientConfig;
-  ClientConfig.TargetURL := 'rtmp://127.0.0.1:1942/live/test';
-  ClientConfig.OutChunkSize := 4096;
-  FClient.Config := ClientConfig;
+  ClientConfig:=DefaultRtmpClientConfig;
+  ClientConfig.TargetURL:='rtmp://127.0.0.1:1942/live/test';
+  ClientConfig.OutChunkSize:=4096;
+  FClient.Config:=ClientConfig;
 end;
 
 destructor TSmallBudgetSmokeApp.Destroy;
@@ -95,7 +95,7 @@ end;
 
 procedure TSmallBudgetSmokeApp.AssertTrue(const AMessage: string; AValue: Boolean);
 begin
-  if not AValue then
+  if NOT AValue then
     raise Exception.Create(AMessage);
 end;
 
@@ -108,33 +108,33 @@ end;
 procedure TSmallBudgetSmokeApp.HandleLog(Sender: TObject; ALevel: TRtmpLogLevel;
   const ACategory, AMessage: string);
 begin
-  if (ALevel = llWarning) and (ACategory = 'buffer') and
+  if (ALevel = llWarning) AND (ACategory = 'buffer') AND
     (Pos('Buffer pressure evicted=', AMessage) > 0) then
-    FBufferWarningSeen := True;
+    FBufferWarningSeen:=True;
 end;
 
 procedure TSmallBudgetSmokeApp.HandlePublishStarted(Sender: TObject;
   Session: TRtmpServerSession);
 begin
-  FPublishStarted := True;
+  FPublishStarted:=True;
 end;
 
 procedure TSmallBudgetSmokeApp.SeedSourceBuffer;
 var
   Packet: TRtmpPacket;
 begin
-  Packet := TRtmpPacket.Create(mtDataAMF0, 0, 0, 1, 5,
+  Packet:=TRtmpPacket.Create(mtDataAMF0, 0, 0, 1, 5,
     TRtmpSharedPayload.Create(Bytes([$12, 0, 1, 2])), [pfIsMetadata], FSequenceNo);
   FSourceBuffer.Push(Packet);
   Inc(FSequenceNo);
 
-  Packet := TRtmpPacket.Create(mtAudio, 0, 0, 1, 4,
+  Packet:=TRtmpPacket.Create(mtAudio, 0, 0, 1, 4,
     TRtmpSharedPayload.Create(Bytes([$AF, $00, $12, $10])),
     [pfIsAudio, pfIsCodecConfig, pfIsSequenceHeader], FSequenceNo);
   FSourceBuffer.Push(Packet);
   Inc(FSequenceNo);
 
-  Packet := TRtmpPacket.Create(mtVideo, 0, 0, 1, 6,
+  Packet:=TRtmpPacket.Create(mtVideo, 0, 0, 1, 6,
     TRtmpSharedPayload.Create(Bytes([$17, $00, $00, $00, $00, $01, $64, $00, $1E])),
     [pfIsVideo, pfIsCodecConfig, pfIsSequenceHeader, pfIsKeyframe], FSequenceNo);
   FSourceBuffer.Push(Packet);
@@ -147,22 +147,22 @@ var
   Packet: TRtmpPacket;
   Timestamp: UInt32;
 begin
-  for I := 0 to 29 do
+  for I:=0 to 29 do
   begin
-    Timestamp := UInt32((I + 1) * 21);
+    Timestamp:=UInt32((I + 1) * 21);
 
-    Packet := TRtmpPacket.Create(mtAudio, Timestamp, 21, 1, 4,
-      TRtmpSharedPayload.Create(Bytes([$AF, $01, Byte(I and $FF), $55, $66, $77])),
+    Packet:=TRtmpPacket.Create(mtAudio, Timestamp, 21, 1, 4,
+      TRtmpSharedPayload.Create(Bytes([$AF, $01, Byte(I AND $FF), $55, $66, $77])),
       [pfIsAudio], FSequenceNo);
     FSourceBuffer.Push(Packet);
     Inc(FSequenceNo);
 
-    if (I mod 10) = 0 then
-      Packet := TRtmpPacket.Create(mtVideo, Timestamp, 21, 1, 6,
+    if (I MOD 10) = 0 then
+      Packet:=TRtmpPacket.Create(mtVideo, Timestamp, 21, 1, 6,
         TRtmpSharedPayload.Create(Bytes([$17, $01, 0, 0, 0, $09, Byte(I), $11, $12, $13])),
         [pfIsVideo, pfIsKeyframe], FSequenceNo)
     else
-      Packet := TRtmpPacket.Create(mtVideo, Timestamp, 21, 1, 6,
+      Packet:=TRtmpPacket.Create(mtVideo, Timestamp, 21, 1, 6,
         TRtmpSharedPayload.Create(Bytes([$27, $01, 0, 0, 0, $09, Byte(I), $21, $22, $23])),
         [pfIsVideo], FSequenceNo);
     FSourceBuffer.Push(Packet);
@@ -182,7 +182,7 @@ begin
   try
     FClient.Start;
     try
-      Deadline := GetTickCount64 + 3000;
+      Deadline:=GetTickCount64 + 3000;
       while GetTickCount64 < Deadline do
       begin
         if FPublishStarted then
@@ -193,7 +193,7 @@ begin
 
       PushLivePackets;
 
-      Deadline := GetTickCount64 + 5000;
+      Deadline:=GetTickCount64 + 5000;
       while GetTickCount64 < Deadline do
       begin
         if FPacketsReceived >= 40 then
@@ -207,7 +207,7 @@ begin
     FServer.Stop;
   end;
 
-  Stats := FServer.GetStats;
+  Stats:=FServer.GetStats;
   if FPacketsReceived < 40 then
     raise Exception.CreateFmt(
       'small-budget smoke: expected >=40 packets actual=%d evicted=%d bufferPackets=%d windowMS=%d errors=%d',
@@ -225,7 +225,7 @@ begin
   AssertTrue('small-budget smoke: duration budget exceeded',
     Stats.Buffer.WindowDurationMS <= Stats.Buffer.MaxDurationMS);
   AssertTrue('small-budget smoke: expected age or packet or byte reason',
-    (Stats.Buffer.EvictedByAgeLimit > 0) or (Stats.Buffer.EvictedByPacketLimit > 0) or
+    (Stats.Buffer.EvictedByAgeLimit > 0) OR (Stats.Buffer.EvictedByPacketLimit > 0) OR
       (Stats.Buffer.EvictedByByteLimit > 0));
   AssertTrue('small-budget smoke: expected zero server errors', Stats.Errors = 0);
 
@@ -239,7 +239,7 @@ var
   App: TSmallBudgetSmokeApp;
 
 begin
-  App := TSmallBudgetSmokeApp.Create;
+  App:=TSmallBudgetSmokeApp.Create;
   try
     App.Run;
   finally

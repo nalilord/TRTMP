@@ -51,10 +51,22 @@ FPC_ARGS=(
 )
 
 if [[ "$USE_FFMPEG" -eq 1 ]]; then
+  if [[ ! -d "$ROOT/ThirdParty/TRadioPlayer/Headers" ]]; then
+    printf 'FFmpeg Pascal headers not found: %s\n' \
+      "$ROOT/ThirdParty/TRadioPlayer/Headers" >&2
+    printf 'Install the optional headers there or omit --with-ffmpeg.\n' >&2
+    exit 1
+  fi
   FPC_ARGS+=(-Fu./ThirdParty/TRadioPlayer/Headers)
 fi
 
 if [[ "$USE_SFML" -eq 1 ]]; then
+  if [[ ! -d "$ROOT/ThirdParty/PasSFML/Source" ]]; then
+    printf 'PasSFML sources not found: %s\n' \
+      "$ROOT/ThirdParty/PasSFML/Source" >&2
+    printf 'Install the optional sources there or omit the SFML option.\n' >&2
+    exit 1
+  fi
   FPC_ARGS+=(-Fu./ThirdParty/PasSFML/Source)
 fi
 

@@ -13,13 +13,13 @@ uses
   {$ENDIF}
   Classes,
   SysUtils,
-  RtmpBytes,
-  RtmpCompat,
-  RtmpProtocol,
-  RtmpServer,
-  RtmpTransport,
-  RtmpTransportNative,
-  RtmpTypes;
+  TRTMP.Core.Bytes,
+  TRTMP.Core.Compat,
+  TRTMP.RTMP.Protocol.Core,
+  TRTMP.RTMP.Server,
+  TRTMP.Transport,
+  TRTMP.Transport.Native,
+  TRTMP.RTMP.Types;
 
 type
   TServerHardeningSmoke = class
@@ -59,9 +59,9 @@ type
 constructor TServerHardeningSmoke.Create;
 begin
   inherited Create;
-  FLogs := TStringList.Create;
-  FTransportFactory := TRtmpNativeTransportFactory.Create;
-  FServer := nil;
+  FLogs:=TStringList.Create;
+  FTransportFactory:=TRtmpNativeTransportFactory.Create;
+  FServer:=nil;
 end;
 
 destructor TServerHardeningSmoke.Destroy;
@@ -73,7 +73,7 @@ end;
 
 procedure TServerHardeningSmoke.AssertTrue(const AMessage: string; AValue: Boolean);
 begin
-  if not AValue then
+  if NOT AValue then
     raise Exception.Create(AMessage);
 end;
 
@@ -89,8 +89,8 @@ function TServerHardeningSmoke.LogContains(const AFragment: string): Boolean;
 var
   I: Integer;
 begin
-  Result := False;
-  for I := 0 to FLogs.Count - 1 do
+  Result:=False;
+  for I:=0 to FLogs.Count - 1 do
     if Pos(AFragment, FLogs[I]) > 0 then
       Exit(True);
 end;
@@ -101,27 +101,27 @@ var
   Offset: Integer;
   Received: Integer;
 begin
-  Result := False;
-  Offset := 0;
+  Result:=False;
+  Offset:=0;
   SetLength(ABytes, ACount);
   while Offset < ACount do
   begin
-    Received := AConnection.Receive(ABytes[Offset], ACount - Offset, ATimeoutMS);
+    Received:=AConnection.Receive(ABytes[Offset], ACount - Offset, ATimeoutMS);
     if Received <= 0 then
       Exit(False);
     Inc(Offset, Received);
   end;
-  Result := True;
+  Result:=True;
 end;
 
 procedure TServerHardeningSmoke.RestartServer(const AConfig: TRtmpServerConfig);
 begin
   StopServer;
   FLogs.Clear;
-  FServer := TRtmpServer.Create;
-  FServer.Config := AConfig;
-  FServer.LogSink.OnLog := HandleServerLog;
-  FServer.MinLogLevel := llDebug;
+  FServer:=TRtmpServer.Create;
+  FServer.Config:=AConfig;
+  FServer.LogSink.OnLog:=HandleServerLog;
+  FServer.MinLogLevel:=llDebug;
   FServer.Start;
 end;
 
@@ -140,14 +140,14 @@ var
   Header: TRtmpChunkMessageHeader;
   Writer: TRtmpByteWriter;
 begin
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType0;
-  Header.Timestamp := 0;
-  Header.MessageLength := 4;
-  Header.MessageTypeID := RtmpMessageTypeID(mtAck);
-  Header.MessageStreamID := 0;
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType0;
+  Header.Timestamp:=0;
+  Header.MessageLength:=4;
+  Header.MessageTypeID:=RtmpMessageTypeID(mtAck);
+  Header.MessageStreamID:=0;
 
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     WriteChunkBasicHeader(Writer, hfType0, AChunkStreamID);
     WriteChunkMessageHeader(Writer, Header);
@@ -165,19 +165,19 @@ var
   I: Integer;
   Writer: TRtmpByteWriter;
 begin
-  Header := Default(TRtmpChunkMessageHeader);
-  Header.HeaderFormat := hfType0;
-  Header.Timestamp := 0;
-  Header.MessageLength := UInt32(ADeclaredLength);
-  Header.MessageTypeID := RtmpMessageTypeID(mtDataAMF0);
-  Header.MessageStreamID := 1;
+  Header:=Default(TRtmpChunkMessageHeader);
+  Header.HeaderFormat:=hfType0;
+  Header.Timestamp:=0;
+  Header.MessageLength:=UInt32(ADeclaredLength);
+  Header.MessageTypeID:=RtmpMessageTypeID(mtDataAMF0);
+  Header.MessageStreamID:=1;
 
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     WriteChunkBasicHeader(Writer, hfType0, 5);
     WriteChunkMessageHeader(Writer, Header);
-    for I := 1 to APayloadBytes do
-      Writer.WriteUInt8(Byte(I mod 256));
+    for I:=1 to APayloadBytes do
+      Writer.WriteUInt8(Byte(I MOD 256));
     SendRawBytes(AConnection, Writer.ToBytes);
   finally
     Writer.Free;
@@ -190,10 +190,10 @@ var
   Offset: Integer;
   Sent: Integer;
 begin
-  Offset := 0;
+  Offset:=0;
   while Offset < Length(ABytes) do
   begin
-    Sent := AConnection.Send(ABytes[Offset], Length(ABytes) - Offset, 3000);
+    Sent:=AConnection.Send(ABytes[Offset], Length(ABytes) - Offset, 3000);
     if Sent <= 0 then
       raise Exception.Create('Failed to send test bytes');
     Inc(Offset, Sent);
@@ -207,19 +207,19 @@ var
   Payload: TBytes;
   Writer: TRtmpByteWriter;
 begin
-  Writer := TRtmpByteWriter.Create;
+  Writer:=TRtmpByteWriter.Create;
   try
     Writer.WriteUInt32BE(AChunkSize);
-    Payload := Writer.ToBytes;
+    Payload:=Writer.ToBytes;
     Writer.Clear;
 
-    Header := Default(TRtmpChunkMessageHeader);
-    Header.HeaderFormat := hfType0;
-    Header.Timestamp := 0;
-    Header.MessageLength := Length(Payload);
-    Header.MessageTypeID := RtmpMessageTypeID(mtSetChunkSize);
-    Header.MessageStreamID := 0;
-    Header.HasExtendedTimestamp := False;
+    Header:=Default(TRtmpChunkMessageHeader);
+    Header.HeaderFormat:=hfType0;
+    Header.Timestamp:=0;
+    Header.MessageLength:=Length(Payload);
+    Header.MessageTypeID:=RtmpMessageTypeID(mtSetChunkSize);
+    Header.MessageStreamID:=0;
+    Header.HasExtendedTimestamp:=False;
 
     WriteChunkBasicHeader(Writer, hfType0, 2);
     WriteChunkMessageHeader(Writer, Header);
@@ -245,15 +245,15 @@ var
   Connection: IRtmpConnection;
   Endpoint: TRtmpSocketEndpoint;
 begin
-  Config := DefaultRtmpServerConfig;
-  Config.BindAddress := '127.0.0.1';
-  Config.Port := 1956;
-  Config.MaxSessions := 2;
-  Config.MaxChunkSize := 1024;
+  Config:=DefaultRtmpServerConfig;
+  Config.BindAddress:='127.0.0.1';
+  Config.Port:=1956;
+  Config.MaxSessions:=2;
+  Config.MaxChunkSize:=1024;
   RestartServer(Config);
 
-  Endpoint := TRtmpSocketEndpoint.Create('127.0.0.1', Config.Port);
-  Connection := FTransportFactory.CreateClientConnection(Endpoint, 3000);
+  Endpoint:=TRtmpSocketEndpoint.Create('127.0.0.1', Config.Port);
+  Connection:=FTransportFactory.CreateClientConnection(Endpoint, 3000);
   try
     WriteHandshake(Connection);
     SendSetChunkSize(Connection, 2048);
@@ -282,15 +282,15 @@ var
   Connection: IRtmpConnection;
   Endpoint: TRtmpSocketEndpoint;
 begin
-  Config := DefaultRtmpServerConfig;
-  Config.BindAddress := '127.0.0.1';
-  Config.Port := 1962;
-  Config.MaxSessions := 2;
-  Config.MaxChunkStreams := 2;
+  Config:=DefaultRtmpServerConfig;
+  Config.BindAddress:='127.0.0.1';
+  Config.Port:=1962;
+  Config.MaxSessions:=2;
+  Config.MaxChunkStreams:=2;
   RestartServer(Config);
 
-  Endpoint := TRtmpSocketEndpoint.Create('127.0.0.1', Config.Port);
-  Connection := FTransportFactory.CreateClientConnection(Endpoint, 3000);
+  Endpoint:=TRtmpSocketEndpoint.Create('127.0.0.1', Config.Port);
+  Connection:=FTransportFactory.CreateClientConnection(Endpoint, 3000);
   try
     WriteHandshake(Connection);
     SendAckOnChunkStream(Connection, 5);
@@ -320,16 +320,16 @@ var
   Connection: IRtmpConnection;
   Endpoint: TRtmpSocketEndpoint;
 begin
-  Config := DefaultRtmpServerConfig;
-  Config.BindAddress := '127.0.0.1';
-  Config.Port := 1961;
-  Config.MaxSessions := 2;
-  Config.MaxChunkSize := 1024;
-  Config.MaxMessageSize := 1024;
+  Config:=DefaultRtmpServerConfig;
+  Config.BindAddress:='127.0.0.1';
+  Config.Port:=1961;
+  Config.MaxSessions:=2;
+  Config.MaxChunkSize:=1024;
+  Config.MaxMessageSize:=1024;
   RestartServer(Config);
 
-  Endpoint := TRtmpSocketEndpoint.Create('127.0.0.1', Config.Port);
-  Connection := FTransportFactory.CreateClientConnection(Endpoint, 3000);
+  Endpoint:=TRtmpSocketEndpoint.Create('127.0.0.1', Config.Port);
+  Connection:=FTransportFactory.CreateClientConnection(Endpoint, 3000);
   try
     WriteHandshake(Connection);
     SendDeclaredDataMessage(Connection, 2048, 128);
@@ -360,25 +360,25 @@ var
   ReceiveBuffer: array[0..255] of Byte;
   Received: Integer;
 begin
-  Config := DefaultRtmpServerConfig;
-  Config.BindAddress := '127.0.0.1';
-  Config.Port := 1955;
-  Config.MaxSessions := 1;
-  Config.MaxChunkSize := 1024;
+  Config:=DefaultRtmpServerConfig;
+  Config.BindAddress:='127.0.0.1';
+  Config.Port:=1955;
+  Config.MaxSessions:=1;
+  Config.MaxChunkSize:=1024;
   RestartServer(Config);
 
-  Endpoint := TRtmpSocketEndpoint.Create('127.0.0.1', Config.Port);
-  Connection1 := FTransportFactory.CreateClientConnection(Endpoint, 3000);
-  Connection2 := nil;
+  Endpoint:=TRtmpSocketEndpoint.Create('127.0.0.1', Config.Port);
+  Connection1:=FTransportFactory.CreateClientConnection(Endpoint, 3000);
+  Connection2:=nil;
   try
     AssertTrue('expected first connection to occupy the only session slot',
       WaitForActiveSessions(1, 2000));
 
-    Connection2 := FTransportFactory.CreateClientConnection(Endpoint, 3000);
+    Connection2:=FTransportFactory.CreateClientConnection(Endpoint, 3000);
     AssertTrue('expected rejected session counter to increment',
       WaitForRejectedSessions(1, 2000));
 
-    Received := Connection2.Receive(ReceiveBuffer, SizeOf(ReceiveBuffer), 1000);
+    Received:=Connection2.Receive(ReceiveBuffer, SizeOf(ReceiveBuffer), 1000);
     AssertTrue('expected second connection to be closed by admission control',
       Received <= 0);
 
@@ -400,14 +400,14 @@ function TServerHardeningSmoke.WaitForActiveSessions(AExpected: Integer;
 var
   Deadline: UInt64;
 begin
-  Deadline := RtmpGetTickCount64 + UInt64(ATimeoutMS);
+  Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
   repeat
-    Result := (FServer <> nil) and (FServer.GetStats.ActiveSessions = AExpected);
+    Result:=(FServer <> nil) AND (FServer.GetStats.ActiveSessions = AExpected);
     if Result then
       Exit;
     Sleep(20);
   until RtmpGetTickCount64 >= Deadline;
-  Result := False;
+  Result:=False;
 end;
 
 function TServerHardeningSmoke.WaitForRejectedSessions(AMinimum: UInt64;
@@ -415,14 +415,14 @@ function TServerHardeningSmoke.WaitForRejectedSessions(AMinimum: UInt64;
 var
   Deadline: UInt64;
 begin
-  Deadline := RtmpGetTickCount64 + UInt64(ATimeoutMS);
+  Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
   repeat
-    Result := (FServer <> nil) and (FServer.GetStats.RejectedSessions >= AMinimum);
+    Result:=(FServer <> nil) AND (FServer.GetStats.RejectedSessions >= AMinimum);
     if Result then
       Exit;
     Sleep(20);
   until RtmpGetTickCount64 >= Deadline;
-  Result := False;
+  Result:=False;
 end;
 
 function TServerHardeningSmoke.WaitForProtocolErrors(AMinimum: UInt64;
@@ -430,14 +430,14 @@ function TServerHardeningSmoke.WaitForProtocolErrors(AMinimum: UInt64;
 var
   Deadline: UInt64;
 begin
-  Deadline := RtmpGetTickCount64 + UInt64(ATimeoutMS);
+  Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
   repeat
-    Result := (FServer <> nil) and (FServer.GetStats.ProtocolErrors >= AMinimum);
+    Result:=(FServer <> nil) AND (FServer.GetStats.ProtocolErrors >= AMinimum);
     if Result then
       Exit;
     Sleep(20);
   until RtmpGetTickCount64 >= Deadline;
-  Result := False;
+  Result:=False;
 end;
 
 function TServerHardeningSmoke.WaitForServerErrors(AMinimum: UInt64;
@@ -445,14 +445,14 @@ function TServerHardeningSmoke.WaitForServerErrors(AMinimum: UInt64;
 var
   Deadline: UInt64;
 begin
-  Deadline := RtmpGetTickCount64 + UInt64(ATimeoutMS);
+  Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
   repeat
-    Result := (FServer <> nil) and (FServer.GetStats.Errors >= AMinimum);
+    Result:=(FServer <> nil) AND (FServer.GetStats.Errors >= AMinimum);
     if Result then
       Exit;
     Sleep(20);
   until RtmpGetTickCount64 >= Deadline;
-  Result := False;
+  Result:=False;
 end;
 
 procedure TServerHardeningSmoke.WriteHandshake(const AConnection: IRtmpConnection);
@@ -462,17 +462,17 @@ var
   S0S1S2: TBytes;
   S1: TBytes;
 begin
-  C0C1 := TRtmpHandshake.BuildC0C1;
+  C0C1:=TRtmpHandshake.BuildC0C1;
   SendRawBytes(AConnection, C0C1);
 
   AssertTrue('expected server handshake response',
     ReadExact(AConnection, 1 + (RTMP_HANDSHAKE_SIZE * 2), 3000, S0S1S2));
   AssertTrue('expected RTMP version in handshake response',
-    (Length(S0S1S2) > 0) and (S0S1S2[0] = RTMP_VERSION));
+    (Length(S0S1S2) > 0) AND (S0S1S2[0] = RTMP_VERSION));
 
   SetLength(S1, RTMP_HANDSHAKE_SIZE);
   Move(S0S1S2[1], S1[0], RTMP_HANDSHAKE_SIZE);
-  C2 := TRtmpHandshake.BuildC2(S1);
+  C2:=TRtmpHandshake.BuildC2(S1);
   SendRawBytes(AConnection, C2);
 end;
 
@@ -480,7 +480,7 @@ var
   Smoke: TServerHardeningSmoke;
 
 begin
-  Smoke := TServerHardeningSmoke.Create;
+  Smoke:=TServerHardeningSmoke.Create;
   try
     Smoke.Run;
   finally

@@ -12,12 +12,12 @@ uses
   {$ENDIF}
   {$ENDIF}
   SysUtils,
-  RtmpBuffer,
-  RtmpClient,
-  RtmpPacket,
-  RtmpServer,
-  RtmpServerSession,
-  RtmpTypes;
+  TRTMP.RTMP.Media.Buffer,
+  TRTMP.RTMP.Client,
+  TRTMP.RTMP.Media.Packet,
+  TRTMP.RTMP.Server,
+  TRTMP.RTMP.Server.Session,
+  TRTMP.RTMP.Types;
 
 type
   TPublishEventSmokeApp = class
@@ -38,10 +38,10 @@ function Bytes(const AValues: array of Byte): TBytes;
 var
   I: Integer;
 begin
-  Result := nil;
+  Result:=nil;
   SetLength(Result, Length(AValues));
-  for I := 0 to High(AValues) do
-    Result[I] := AValues[I];
+  for I:=0 to High(AValues) do
+    Result[I]:=AValues[I];
 end;
 
 constructor TPublishEventSmokeApp.Create;
@@ -50,22 +50,22 @@ var
   ServerConfig: TRtmpServerConfig;
 begin
   inherited Create;
-  FClient := TRtmpClient.Create;
-  FPublishStarted := False;
-  FServer := TRtmpServer.Create;
-  FSourceBuffer := TRtmpCircularBuffer.Create(64, 2 * 1024 * 1024);
+  FClient:=TRtmpClient.Create;
+  FPublishStarted:=False;
+  FServer:=TRtmpServer.Create;
+  FSourceBuffer:=TRtmpCircularBuffer.Create(64, 2 * 1024 * 1024);
 
-  ServerConfig := DefaultRtmpServerConfig;
-  ServerConfig.BindAddress := '127.0.0.1';
-  ServerConfig.Port := 1945;
-  FServer.Config := ServerConfig;
-  FServer.MinLogLevel := llError;
-  FServer.OnPublishStarted := HandlePublishStarted;
+  ServerConfig:=DefaultRtmpServerConfig;
+  ServerConfig.BindAddress:='127.0.0.1';
+  ServerConfig.Port:=1945;
+  FServer.Config:=ServerConfig;
+  FServer.MinLogLevel:=llError;
+  FServer.OnPublishStarted:=HandlePublishStarted;
 
   FClient.AttachBuffer(FSourceBuffer);
-  ClientConfig := DefaultRtmpClientConfig;
-  ClientConfig.TargetURL := 'rtmp://127.0.0.1:1945/live/test';
-  FClient.Config := ClientConfig;
+  ClientConfig:=DefaultRtmpClientConfig;
+  ClientConfig.TargetURL:='rtmp://127.0.0.1:1945/live/test';
+  FClient.Config:=ClientConfig;
 end;
 
 destructor TPublishEventSmokeApp.Destroy;
@@ -79,28 +79,28 @@ end;
 procedure TPublishEventSmokeApp.HandlePublishStarted(Sender: TObject;
   Session: TRtmpServerSession);
 begin
-  FPublishStarted := True;
+  FPublishStarted:=True;
 end;
 
 procedure TPublishEventSmokeApp.SeedSourceBuffer;
 var
   Packet: TRtmpPacket;
 begin
-  Packet := TRtmpPacket.Create(mtDataAMF0, 0, 0, 1, 5,
+  Packet:=TRtmpPacket.Create(mtDataAMF0, 0, 0, 1, 5,
     TRtmpSharedPayload.Create(Bytes([$12, $00, $01, $02])), [pfIsMetadata], 0);
   FSourceBuffer.Push(Packet);
 
-  Packet := TRtmpPacket.Create(mtAudio, 0, 0, 1, 4,
+  Packet:=TRtmpPacket.Create(mtAudio, 0, 0, 1, 4,
     TRtmpSharedPayload.Create(Bytes([$AF, $00, $12, $10])),
     [pfIsAudio, pfIsCodecConfig, pfIsSequenceHeader], 1);
   FSourceBuffer.Push(Packet);
 
-  Packet := TRtmpPacket.Create(mtVideo, 0, 0, 1, 6,
+  Packet:=TRtmpPacket.Create(mtVideo, 0, 0, 1, 6,
     TRtmpSharedPayload.Create(Bytes([$17, $00, $00, $00, $00, $01, $64, $00, $1E])),
     [pfIsVideo, pfIsCodecConfig, pfIsSequenceHeader, pfIsKeyframe], 2);
   FSourceBuffer.Push(Packet);
 
-  Packet := TRtmpPacket.Create(mtVideo, 40, 40, 1, 6,
+  Packet:=TRtmpPacket.Create(mtVideo, 40, 40, 1, 6,
     TRtmpSharedPayload.Create(Bytes([$17, $01, $00, $00, $00, $09, $10, $11, $12, $13])),
     [pfIsVideo, pfIsKeyframe], 3);
   FSourceBuffer.Push(Packet);
@@ -115,7 +115,7 @@ begin
   try
     FClient.Start;
     try
-      Deadline := GetTickCount64 + 4000;
+      Deadline:=GetTickCount64 + 4000;
       while GetTickCount64 < Deadline do
       begin
         if FPublishStarted then
@@ -129,7 +129,7 @@ begin
     FServer.Stop;
   end;
 
-  if not FPublishStarted then
+  if NOT FPublishStarted then
     raise Exception.Create(
       'Publish-event smoke failed: OnPublishStarted should fire even when MinLogLevel=llError');
 
@@ -140,7 +140,7 @@ var
   App: TPublishEventSmokeApp;
 
 begin
-  App := TPublishEventSmokeApp.Create;
+  App:=TPublishEventSmokeApp.Create;
   try
     App.Run;
   finally
