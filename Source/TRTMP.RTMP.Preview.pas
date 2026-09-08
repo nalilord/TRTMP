@@ -1307,6 +1307,13 @@ begin
           for I:=0 to KeyframeIndex - 1 do
             FPackets.Delete(0);
         end;
+
+        // A short timestamp burst is cheaper to drain than a forced wait for
+        // the publisher's next keyframe. Only fall through to destructive
+        // trimming when the hard packet-count limit is also exceeded.
+        if (FConfig.PacketQueueMax <= 0) OR
+          (FPackets.Count <= FConfig.PacketQueueMax) then
+          Exit;
       end;
   end;
 

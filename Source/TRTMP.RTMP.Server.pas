@@ -373,6 +373,11 @@ begin
   DeltaBytes:=AAfter.EvictedByByteLimit - ABefore.EvictedByByteLimit;
   DeltaAge:=AAfter.EvictedByAgeLimit - ABefore.EvictedByAgeLimit;
 
+  // Expiry at the configured age is normal rolling-buffer maintenance.
+  // Report only capacity pressure that may indicate an undersized buffer.
+  if (DeltaPacket = 0) AND (DeltaBytes = 0) then
+    Exit;
+
   MessageText:=Format(
     'Buffer pressure evicted=%d packetLimit=%d byteLimit=%d ageLimit=%d packets=%d/%d bytes=%d/%d windowMS=%d/%d retained=%d retainedBytes=%d',
     [DeltaEvicted, DeltaPacket, DeltaBytes, DeltaAge,
