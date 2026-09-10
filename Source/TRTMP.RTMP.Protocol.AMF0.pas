@@ -467,12 +467,17 @@ var
   Reader: TRtmpByteReader;
 begin
   Result:=TRtmpAmf0ValueList.Create(True);
-  Reader:=TRtmpByteReader.Create(ABytes);
   try
-    while Reader.Remaining > 0 do
-      Result.AddValue(DecodeValue(Reader));
-  finally
-    Reader.Free;
+    Reader:=TRtmpByteReader.Create(ABytes);
+    try
+      while Reader.Remaining > 0 do
+        Result.AddValue(DecodeValue(Reader));
+    finally
+      Reader.Free;
+    end;
+  except
+    Result.Free;
+    raise;
   end;
 end;
 

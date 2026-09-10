@@ -148,9 +148,19 @@ type
   TRtmpPreviewStreamEvent = procedure(Sender: TObject; const AStreamName,
     ARemoteAddress: string; ARemotePort: Word) of object;
 
+  TRtmpPendingStreamEvent = record
+    Started: Boolean;
+    StreamName: string;
+    RemoteAddress: string;
+    RemotePort: Word;
+  end;
+  TRtmpPendingStreamEvents = array of TRtmpPendingStreamEvent;
+
   TRtmpPreview = class
   private
     FActiveSessionKey: string;
+    FDecodeSessionKey: string;
+    FPendingStreamEvents: TRtmpPendingStreamEvents;
     FConfig: TRtmpPreviewConfig;
     FConverter: TRtmpFFmpegFrameConverter;
     FCurrentPacketArrivalTick: UInt64;
@@ -183,7 +193,15 @@ type
     FStartedAt: UInt64;
     FStats: TRtmpPreviewStats;
     FWaitingForVideoKeyframe: Boolean;
+    FDecoderResyncPending: Boolean;
     procedure ApplyPendingReset;
+    procedure DrainStreamEvents;
+    procedure QueueStreamEventLocked(AStarted: Boolean; const AStream, AAddress: string;
+      APort: Word);
+    function GetConfig: TRtmpPreviewConfig;
+    procedure SetConfig(const AValue: TRtmpPreviewConfig);
+    function GetSelectedPublisher: string;
+    function GetSelectedStreamName: string;
     procedure CacheSessionVideoConfigLocked(const ASessionKey: string;
       APacket: TRtmpPacket);
     procedure ClearActiveSelectionLocked;
@@ -224,13 +242,13 @@ type
     procedure Start;
     procedure Stop;
 
-    property Config: TRtmpPreviewConfig read FConfig write FConfig;
+    property Config: TRtmpPreviewConfig read GetConfig write SetConfig;
     property OnFrame: TRtmpPreviewFrameEvent read FOnFrame write FOnFrame;
     property OnLog: TRtmpPreviewLogEvent read FOnLog write FOnLog;
     property OnStreamStarted: TRtmpPreviewStreamEvent read FOnStreamStarted write FOnStreamStarted;
     property OnStreamStopped: TRtmpPreviewStreamEvent read FOnStreamStopped write FOnStreamStopped;
-    property SelectedPublisher: string read FSelectedPublisher;
-    property SelectedStreamName: string read FSelectedStreamName;
+    property SelectedPublisher: string read GetSelectedPublisher;
+    property SelectedStreamName: string read GetSelectedStreamName;
     property Server: TRtmpServer read FServer;
     property Stats: TRtmpPreviewStats read GetStats;
   end;
@@ -377,9 +395,6 @@ procedure TRtmpPreview.ResetSessionStatsLocked;
 begin
   FStats:=Default(TRtmpPreviewStats);
   FStats.LastFrameTimestampMS:=-1;
-  FLastDecodedFrameTimestampMS:=-1;
-  FLastReceiveDurationMS:=0;
-  FLastSubmitDurationMS:=0;
   FCumulativeFrameAgeMS:=0;
   FLastFpsTick:=RtmpGetTickCount64;
   FLastFpsFrames:=0;
@@ -400,6 +415,84 @@ begin
 
   if NeedReset then
     ResetDecoderState;
+end;
+
+function TRtmpPreview.GetConfig: TRtmpPreviewConfig;
+begin
+  FLock.Acquire;
+  try
+    Result:=FConfig;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TRtmpPreview.SetConfig(const AValue: TRtmpPreviewConfig);
+begin
+  FLock.Acquire;
+  try
+    FConfig:=AValue;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TRtmpPreview.GetSelectedPublisher: string;
+begin
+  FLock.Acquire;
+  try
+    Result:=FSelectedPublisher;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TRtmpPreview.GetSelectedStreamName: string;
+begin
+  FLock.Acquire;
+  try
+    Result:=FSelectedStreamName;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TRtmpPreview.QueueStreamEventLocked(AStarted: Boolean;
+  const AStream, AAddress: string; APort: Word);
+var
+  Index: Integer;
+begin
+  Index:=Length(FPendingStreamEvents);
+  SetLength(FPendingStreamEvents, Index + 1);
+  FPendingStreamEvents[Index].Started:=AStarted;
+  FPendingStreamEvents[Index].StreamName:=AStream;
+  FPendingStreamEvents[Index].RemoteAddress:=AAddress;
+  FPendingStreamEvents[Index].RemotePort:=APort;
+end;
+
+procedure TRtmpPreview.DrainStreamEvents;
+var
+  Events: TRtmpPendingStreamEvents;
+  I: Integer;
+begin
+  FLock.Acquire;
+  try
+    Events:=FPendingStreamEvents;
+    FPendingStreamEvents:=nil;
+  finally
+    FLock.Release;
+  end;
+  // Poll owns callback delivery; session threads never call UI or Lua code.
+  for I:=0 to High(Events) do
+    if Events[I].Started then
+    begin
+      if Assigned(FOnStreamStarted) then
+        FOnStreamStarted(Self, Events[I].StreamName, Events[I].RemoteAddress,
+          Events[I].RemotePort);
+    end
+    else if Assigned(FOnStreamStopped) then
+      FOnStreamStopped(Self, Events[I].StreamName, Events[I].RemoteAddress,
+        Events[I].RemotePort);
 end;
 
 procedure TRtmpPreview.ClearActiveSelectionLocked;
@@ -509,6 +602,7 @@ end;
 
 procedure TRtmpPreview.DrainPackets;
 var
+  VideoConfig: TRtmpPacket;
   I: Integer;
   OpenResult: Boolean;
   Packet: TRtmpPacket;
@@ -544,6 +638,13 @@ begin
 
       FLock.Acquire;
       try
+        if FResetPending OR (FDecodeSessionKey <> FActiveSessionKey) then
+          Break;
+        if FDecoderResyncPending then
+        begin
+          FWaitingForVideoKeyframe:=True;
+          FDecoderResyncPending:=False;
+        end;
         Inc(FStats.ProcessedPackets);
         Inc(FStats.ProcessedBytes, UInt64(PacketSize));
         if Packet.HasFlag(pfIsCodecConfig) then
@@ -596,7 +697,15 @@ begin
 
       if NOT FDecoder.IsOpen then
       begin
-        if FLatestVideoConfig <> nil then
+        VideoConfig:=nil;
+        FLock.Acquire;
+        try
+          if FLatestVideoConfig <> nil then
+            VideoConfig:=FLatestVideoConfig.CloneShallow;
+        finally
+          FLock.Release;
+        end;
+        if VideoConfig <> nil then
         begin
           FLock.Acquire;
           try
@@ -605,7 +714,11 @@ begin
             FLock.Release;
           end;
 
-          OpenResult:=FDecoder.OpenFromConfig(FLatestVideoConfig);
+          try
+            OpenResult:=FDecoder.OpenFromConfig(VideoConfig);
+          finally
+            VideoConfig.Free;
+          end;
           if NOT OpenResult then
           begin
             EmitLog(llWarning, 'preview',
@@ -714,8 +827,13 @@ begin
 
   NowTick:=RtmpGetTickCount64;
   Frame:=Default(TRtmpPreviewFrame);
-  Frame.StreamName:=FSelectedStreamName;
-  Frame.StreamPublisher:=FSelectedPublisher;
+  FLock.Acquire;
+  try
+    Frame.StreamName:=FSelectedStreamName;
+    Frame.StreamPublisher:=FSelectedPublisher;
+  finally
+    FLock.Release;
+  end;
   Frame.TimestampMS:=AInfo.TimestampMS;
   Frame.TimestampNS:=AInfo.TimestampNS;
   Frame.TimestampNanoOffset:=AInfo.TimestampNanoOffset;
@@ -765,6 +883,8 @@ begin
 
   FLock.Acquire;
   try
+    if FResetPending OR (FDecodeSessionKey <> FActiveSessionKey) then
+      Exit;
     Inc(FStats.FramesDecoded);
     Inc(FCumulativeFrameAgeMS, Frame.DecodeLatencyMS);
     FStats.LastFrameTimestampMS:=Frame.TimestampMS;
@@ -914,12 +1034,10 @@ end;
 procedure TRtmpPreview.HandleClientDisconnected(Sender: TObject;
   Session: TRtmpServerSession);
 var
-  NotifyStop: Boolean;
   StoppedAddress: string;
   StoppedPort: Word;
   StoppedStream: string;
 begin
-  NotifyStop:=False;
   StoppedAddress:='';
   StoppedPort:=0;
   StoppedStream:='';
@@ -929,25 +1047,22 @@ begin
     RemoveSessionVideoConfigLocked(SessionKey(Session));
     if SessionKey(Session) = FActiveSessionKey then
     begin
-      NotifyStop:=True;
       StoppedAddress:=FSelectedRemoteAddress;
       StoppedPort:=FSelectedRemotePort;
       StoppedStream:=FSelectedStreamName;
       ClearActiveSelectionLocked;
       FResetPending:=True;
+      QueueStreamEventLocked(False, StoppedStream, StoppedAddress, StoppedPort);
     end;
   finally
     FLock.Release;
   end;
 
-  if NotifyStop AND Assigned(FOnStreamStopped) then
-    FOnStreamStopped(Self, StoppedStream, StoppedAddress, StoppedPort);
 end;
 
 procedure TRtmpPreview.HandleData(Sender: TObject; Session: TRtmpServerSession;
   Packet: TRtmpPacket);
 var
-  NotifyStart: Boolean;
   SessionId: string;
   StreamName: string;
 begin
@@ -955,25 +1070,13 @@ begin
     Exit;
 
   SessionId:=SessionKey(Session);
-  if Packet.HasFlag(pfIsCodecConfig) then
-  begin
-    FLock.Acquire;
-    try
+  StreamName:=SessionStreamName(Session);
+  FLock.Acquire;
+  try
+    if Packet.HasFlag(pfIsCodecConfig) then
       CacheSessionVideoConfigLocked(SessionId, Packet);
-    finally
-      FLock.Release;
-    end;
-  end;
-
-  if SessionId <> FActiveSessionKey then
-  begin
-    NotifyStart:=False;
-    StreamName:=SessionStreamName(Session);
-    if NOT MatchesSelection(StreamName) then
-      Exit;
-
-    FLock.Acquire;
-    try
+    if SessionId <> FActiveSessionKey then
+    begin
       if (FActiveSessionKey = '') AND MatchesSelection(StreamName) then
       begin
         FActiveSessionKey:=SessionId;
@@ -983,23 +1086,18 @@ begin
         FSelectedPublisher:=PublisherLabel(Session);
         ResetSessionStatsLocked;
         FResetPending:=True;
-        NotifyStart:=True;
+        QueueStreamEventLocked(True, StreamName, Session.RemoteAddress,
+          Session.RemotePort);
       end;
-    finally
-      FLock.Release;
     end;
-
-    if NotifyStart AND Assigned(FOnStreamStarted) then
-      FOnStreamStarted(Self, StreamName, Session.RemoteAddress,
-        Session.RemotePort);
-
     if SessionId <> FActiveSessionKey then
       Exit;
+    // Selection and enqueue are atomic, so a switch cannot admit an old
+    // publisher's packet into the new decoder queue.
+    EnqueuePacket(Packet);
+  finally
+    FLock.Release;
   end;
-
-  if SessionId <> FActiveSessionKey then
-    Exit;
-  EnqueuePacket(Packet);
 end;
 
 procedure TRtmpPreview.HandlePublishStarted(Sender: TObject;
@@ -1015,17 +1113,6 @@ var
   StreamName: string;
 begin
   StreamName:=SessionStreamName(Session);
-  if NOT MatchesSelection(StreamName) then
-  begin
-    FLock.Acquire;
-    try
-      Inc(FStats.SelectionRejects);
-    finally
-      FLock.Release;
-    end;
-    Exit;
-  end;
-
   SessionId:=SessionKey(Session);
   NotifyStart:=False;
   NotifyStop:=False;
@@ -1035,6 +1122,11 @@ begin
 
   FLock.Acquire;
   try
+    if NOT MatchesSelection(StreamName) then
+    begin
+      Inc(FStats.SelectionRejects);
+      Exit;
+    end;
     case FConfig.SelectionMode of
       psmFirstActive:
         ShouldSelect:=FActiveSessionKey = '';
@@ -1064,27 +1156,25 @@ begin
       FResetPending:=True;
       NotifyStart:=True;
     end;
+    if NotifyStop then
+      QueueStreamEventLocked(False, PreviousStream, PreviousAddress, PreviousPort);
+    if NotifyStart then
+      QueueStreamEventLocked(True, StreamName, Session.RemoteAddress, Session.RemotePort);
   finally
     FLock.Release;
   end;
 
-  if NotifyStop AND Assigned(FOnStreamStopped) then
-    FOnStreamStopped(Self, PreviousStream, PreviousAddress, PreviousPort);
-  if NotifyStart AND Assigned(FOnStreamStarted) then
-    FOnStreamStarted(Self, StreamName, Session.RemoteAddress, Session.RemotePort);
 end;
 
 procedure TRtmpPreview.HandlePublishStopped(Sender: TObject;
   Session: TRtmpServerSession);
 var
-  NotifyStop: Boolean;
   StoppedAddress: string;
   StoppedPort: Word;
   StoppedStream: string;
   StoppedKey: string;
 begin
   StoppedKey:=SessionKey(Session);
-  NotifyStop:=False;
   StoppedAddress:='';
   StoppedPort:=0;
   StoppedStream:='';
@@ -1094,19 +1184,17 @@ begin
     RemoveSessionVideoConfigLocked(StoppedKey);
     if StoppedKey = FActiveSessionKey then
     begin
-      NotifyStop:=True;
       StoppedAddress:=FSelectedRemoteAddress;
       StoppedPort:=FSelectedRemotePort;
       StoppedStream:=FSelectedStreamName;
       ClearActiveSelectionLocked;
       FResetPending:=True;
+      QueueStreamEventLocked(False, StoppedStream, StoppedAddress, StoppedPort);
     end;
   finally
     FLock.Release;
   end;
 
-  if NotifyStop AND Assigned(FOnStreamStopped) then
-    FOnStreamStopped(Self, StoppedStream, StoppedAddress, StoppedPort);
 end;
 
 procedure TRtmpPreview.HandleServerLog(Sender: TObject; ALevel: TRtmpLogLevel;
@@ -1128,6 +1216,7 @@ end;
 
 procedure TRtmpPreview.Poll;
 begin
+  DrainStreamEvents;
   ApplyPendingReset;
   DrainPackets;
 end;
@@ -1144,12 +1233,14 @@ begin
   FLock.Acquire;
   try
     ClearPacketQueueLocked;
+    FDecodeSessionKey:=FActiveSessionKey;
     RestoreSessionVideoConfigLocked(FActiveSessionKey);
     FCurrentPacketArrivalTick:=0;
     FCurrentPacketQueueBytes:=0;
     FCurrentPacketQueueDepth:=0;
     FCurrentPacketSequenceNo:=0;
     FWaitingForVideoKeyframe:=FActiveSessionKey <> '';
+    FDecoderResyncPending:=False;
     if Assigned(FDrainFrame) then
       TRtmpFFmpegApi.UnrefFrame(FDrainFrame);
     FLastReceiveDurationMS:=0;
@@ -1261,6 +1352,7 @@ begin
     ClearActiveSelectionLocked;
     FSessionVideoConfigs.Clear;
     FResetPending:=False;
+    FPendingStreamEvents:=nil;
   finally
     FLock.Release;
   end;
@@ -1361,7 +1453,7 @@ begin
     FStats.QueuePackets:=0;
     FStats.QueueBytes:=0;
     FStats.QueueDurationMS:=0;
-    FWaitingForVideoKeyframe:=True;
+    FDecoderResyncPending:=True;
   end;
 end;
 

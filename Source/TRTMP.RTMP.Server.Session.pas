@@ -25,9 +25,11 @@ type
     Packet: TRtmpPacket) of object;
   TRtmpSessionLogEvent = procedure(Session: TRtmpServerSession;
     ALevel: TRtmpLogLevel; const ACategory, AMessage: string) of object;
+  TRtmpSessionStopQuery = function: Boolean of object;
 
   TRtmpServerSession = class
   private
+    FOnStopRequested: TRtmpSessionStopQuery;
     FLock: TCriticalSection;
     FRemoteAddress: string;
     FRemotePort: Word;
@@ -70,6 +72,12 @@ type
     FReconnectRequestTcUrl: string;
     FReadTimeoutMS: Integer;
     FWriteTimeoutMS: Integer;
+    FHandshakeTimeoutMS: Integer;
+    FIdleTimeoutMS: Integer;
+    FHandshakeStartedAt: UInt64;
+    FLastMessageTick: UInt64;
+    FLastSendTick: UInt64;
+    function StopRequested: Boolean;
     function GetStreamName: string;
     function StreamNameForLog: string;
     function IsLogEnabled(ALevel: TRtmpLogLevel): Boolean;
@@ -157,6 +165,9 @@ type
     property MaxInMessageSize: Integer read FMaxInMessageSize write SetMaxInMessageSize;
     property MinLogLevel: TRtmpLogLevel read FMinLogLevel write FMinLogLevel;
     property ReadTimeoutMS: Integer read FReadTimeoutMS write FReadTimeoutMS;
+    property OnStopRequested: TRtmpSessionStopQuery read FOnStopRequested write FOnStopRequested;
+    property HandshakeTimeoutMS: Integer read FHandshakeTimeoutMS write FHandshakeTimeoutMS;
+    property IdleTimeoutMS: Integer read FIdleTimeoutMS write FIdleTimeoutMS;
     property State: TRtmpSessionState read FState write FState;
     property StartedAt: TRtmpTick read FStartedAt;
     property WriteTimeoutMS: Integer read FWriteTimeoutMS write FWriteTimeoutMS;
@@ -411,6 +422,8 @@ begin
   FReconnectRequestTcUrl:='';
   FReadTimeoutMS:=10000;
   FWriteTimeoutMS:=10000;
+  FHandshakeTimeoutMS:=10000;
+  FIdleTimeoutMS:=30000;
   FRawBytesReceived:=0;
   FNextAckAt:=FAckWindowSize;
   FReassembler:=TRtmpChunkReassembler.Create(FInChunkSize);
@@ -436,6 +449,11 @@ end;
 function TRtmpServerSession.IsLogEnabled(ALevel: TRtmpLogLevel): Boolean;
 begin
   Result:=Assigned(FActiveLogHandler) AND (ALevel >= FMinLogLevel);
+end;
+
+function TRtmpServerSession.StopRequested: Boolean;
+begin
+  Result:=Assigned(FOnStopRequested) AND FOnStopRequested();
 end;
 
 procedure TRtmpServerSession.EmitLog(AOnLog: TRtmpSessionLogEvent;
@@ -1037,6 +1055,7 @@ var
   Reply: TBytes;
 begin
   Result:=False;
+  FHandshakeStartedAt:=RtmpGetTickCount64;
   if IsLogEnabled(llDebug) then
     EmitLog(AOnLog, llDebug, 'handshake', 'Waiting for C0');
   if NOT ReadExact(1, C0) then
@@ -1079,6 +1098,7 @@ function TRtmpServerSession.ReadExact(ACount: Integer; out ABytes: TBytes): Bool
 var
   Offset: Integer;
   Received: Integer;
+  ReadWait: Integer;
 begin
   Result:=False;
   Offset:=0;
@@ -1086,7 +1106,19 @@ begin
 
   while Offset < ACount do
   begin
-    Received:=FConnection.Receive(ABytes[Offset], ACount - Offset, FReadTimeoutMS);
+    if StopRequested OR (NOT FConnection.Connected) then
+      Exit;
+    if (FHandshakeTimeoutMS > 0) AND
+      (RtmpGetTickCount64 - FHandshakeStartedAt >= UInt64(FHandshakeTimeoutMS)) then
+    begin
+      EmitLog(FActiveLogHandler, llWarning, 'handshake', 'Handshake deadline exceeded');
+      FConnection.Close;
+      Exit;
+    end;
+    ReadWait:=FReadTimeoutMS;
+    if (ReadWait <= 0) OR (ReadWait > 200) then
+      ReadWait:=200;
+    Received:=FConnection.Receive(ABytes[Offset], ACount - Offset, ReadWait);
     if Received <= 0 then
     begin
       if NOT FConnection.Connected then
@@ -1150,6 +1182,7 @@ var
   MessagesRead: Integer;
   ReadTimeout: Integer;
   Received: Integer;
+  LastActivity: UInt64;
 begin
   Result:=False;
   if FConnection = nil then
@@ -1164,14 +1197,29 @@ begin
   if NOT PerformHandshake(AOnLog) then
     Exit;
 
+  FLastMessageTick:=RtmpGetTickCount64;
   ContinueProcessing:=True;
-  while FConnection.Connected do
+  while FConnection.Connected AND NOT StopRequested do
   begin
+    LastActivity:=FLastMessageTick;
+    // A playback client may only receive media. Successfully sent data also
+    // constitutes progress for that direction, but not for an idle publisher.
+    if FHasActivePlay AND (FLastSendTick > LastActivity) then
+      LastActivity:=FLastSendTick;
+    if (FIdleTimeoutMS > 0) AND
+      (RtmpGetTickCount64 - LastActivity >= UInt64(FIdleTimeoutMS)) then
+    begin
+      EmitLog(AOnLog, llWarning, 'session', 'Session idle deadline exceeded');
+      FConnection.Close;
+      Break;
+    end;
     MaybeSendReconnectRequest;
     if FHasActivePlay then
       PumpPlayPackets(AOnLog);
 
     ReadTimeout:=FReadTimeoutMS;
+    if (ReadTimeout <= 0) OR (ReadTimeout > 200) then
+      ReadTimeout:=200;
     if FHasActivePlay AND ((ReadTimeout <= 0) OR (ReadTimeout > 50)) then
       ReadTimeout:=50;
 
@@ -1198,12 +1246,18 @@ begin
     try
       while FReassembler.TryReadMessage(ChunkMessage) do
       begin
+        if StopRequested then
+        begin
+          ContinueProcessing:=False;
+          Break;
+        end;
         Inc(MessagesRead);
         if NOT HandleChunkMessage(ChunkMessage, AOnPacket, AOnLog) then
         begin
           ContinueProcessing:=False;
           Break;
         end;
+        FLastMessageTick:=RtmpGetTickCount64;
       end;
 
       if IsLogEnabled(llDebug) AND (MessagesRead = 0) AND
@@ -1268,6 +1322,8 @@ var
   Cursor: PByte;
   Offset: Integer;
   Sent: Integer;
+  Started: UInt64;
+  WriteWait: Integer;
 begin
   if ACount <= 0 then
     Exit;
@@ -1277,16 +1333,28 @@ begin
 
   Cursor:=PByte(ABuffer);
   Offset:=0;
+  Started:=RtmpGetTickCount64;
   if IsLogEnabled(llDebug) then
     EmitLog(FActiveLogHandler, llDebug, 'socket',
       Format('Sending raw bytes=%d', [ACount]));
   while Offset < ACount do
   begin
-    Sent:=FConnection.Send(Cursor^, ACount - Offset, FWriteTimeoutMS);
-    if Sent <= 0 then
+    if StopRequested then
+      raise ERtmpTransportError.Create('Session stopping');
+    if (FWriteTimeoutMS > 0) AND
+      (RtmpGetTickCount64 - Started >= UInt64(FWriteTimeoutMS)) then
+      raise ERtmpTransportError.Create('Socket send deadline exceeded');
+    WriteWait:=FWriteTimeoutMS;
+    if (WriteWait <= 0) OR (WriteWait > 200) then
+      WriteWait:=200;
+    Sent:=FConnection.Send(Cursor^, ACount - Offset, WriteWait);
+    if (Sent < 0) OR (NOT FConnection.Connected) then
       raise ERtmpTransportError.Create('Socket send timed out or failed');
+    if Sent = 0 then
+      Continue;
     Inc(Cursor, Sent);
     Inc(Offset, Sent);
+    FLastSendTick:=RtmpGetTickCount64;
   end;
 end;
 

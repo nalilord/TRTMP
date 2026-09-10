@@ -43,10 +43,12 @@ type
   private
     FConnection: IRtmpConnection;
     FServer: TRtmpServer;
+    function IsStopRequested: Boolean;
   protected
     procedure Execute; override;
   public
     constructor Create(AServer: TRtmpServer; const AConnection: IRtmpConnection);
+    procedure RequestStop;
   end;
 
   TRtmpServer = class
@@ -68,10 +70,14 @@ type
     FOnData: TRtmpPacketEvent;
     FPacketSink: TRtmpPacketSink;
     FSessionSlots: Integer;
+    FSessionThreads: TList;
     FStats: TRtmpServerStatsTracker;
     FTransportFactory: IRtmpTransportFactory;
     FMinLogLevel: TRtmpLogLevel;
     function GetSessionSlotCount: Integer;
+    function GetConfig: TRtmpServerConfig;
+    procedure SetConfig(const AValue: TRtmpServerConfig);
+    procedure ReapSessionThreads;
     procedure HandleSessionLog(Session: TRtmpServerSession; ALevel: TRtmpLogLevel;
       const ACategory, AMessage: string);
     procedure HandleSessionPacket(Session: TRtmpServerSession; Packet: TRtmpPacket);
@@ -100,7 +106,7 @@ type
     property Authorizer: IRtmpServerAuthorizer read FAuthorizer write FAuthorizer;
     property Buffer: TRtmpCircularBuffer read FBuffer;
     property PlaybackBuffer: TRtmpCircularBuffer read FPlaybackBuffer;
-    property Config: TRtmpServerConfig read FConfig write FConfig;
+    property Config: TRtmpServerConfig read GetConfig write SetConfig;
     property Listener: IRtmpListener read FListener;
     property LogSink: TRtmpLogSink read FLog;
     property Stats: TRtmpServerStats read GetStats;
@@ -136,6 +142,7 @@ begin
       if (FServer = nil) OR (NOT FServer.Active) OR (FServer.Listener = nil) then
         Break;
 
+      FServer.ReapSessionThreads;
       Connection:=FServer.Listener.Accept(200);
       if Connection <> nil then
         FServer.StartSessionThread(Connection);
@@ -154,39 +161,63 @@ constructor TRtmpServerSessionThread.Create(AServer: TRtmpServer;
   const AConnection: IRtmpConnection);
 begin
   inherited Create(True);
-  FreeOnTerminate:=True;
+  FreeOnTerminate:=False;
   FServer:=AServer;
   FConnection:=AConnection;
+end;
+
+procedure TRtmpServerSessionThread.RequestStop;
+begin
+  Terminate;
+end;
+
+function TRtmpServerSessionThread.IsStopRequested: Boolean;
+begin
+  Result:=Terminated;
 end;
 
 procedure TRtmpServerSessionThread.Execute;
 var
   Session: TRtmpServerSession;
+  Config: TRtmpServerConfig;
+  ConnectedNotified: Boolean;
 begin
-  Session:=TRtmpServerSession.Create(FConnection);
+  Session:=nil;
+  ConnectedNotified:=False;
   try
-    Session.MinLogLevel:=llDebug;
-    Session.MaxInChunkSize:=FServer.Config.MaxChunkSize;
-    Session.MaxInMessageSize:=FServer.Config.MaxMessageSize;
-    Session.MaxInChunkStreams:=FServer.Config.MaxChunkStreams;
-    Session.ReadTimeoutMS:=FServer.Config.ReadTimeoutMS;
-    Session.WriteTimeoutMS:=FServer.Config.WriteTimeoutMS;
-    Session.SupportedEnhancedCapabilities:=
-      FServer.Config.EnhancedCapabilities;
-    Session.Authorizer:=FServer.Authorizer;
-    Session.AttachBuffer(FServer.PlaybackBuffer);
-    FServer.NotifyClientConnected(Session);
-    Session.Run(FServer.HandleSessionPacket, FServer.HandleSessionLog);
-  except
-    on E: Exception do
-      FServer.HandleSessionLog(Session, llError, 'session', E.Message);
-  end;
-
-  try
-    FServer.NotifyClientDisconnected(Session);
+    try
+      if Terminated then
+        Exit;
+      Config:=FServer.Config;
+      Session:=TRtmpServerSession.Create(FConnection);
+      Session.OnStopRequested:=IsStopRequested;
+      Session.MinLogLevel:=llDebug;
+      Session.MaxInChunkSize:=Config.MaxChunkSize;
+      Session.MaxInMessageSize:=Config.MaxMessageSize;
+      Session.MaxInChunkStreams:=Config.MaxChunkStreams;
+      Session.ReadTimeoutMS:=Config.ReadTimeoutMS;
+      Session.WriteTimeoutMS:=Config.WriteTimeoutMS;
+      Session.HandshakeTimeoutMS:=Config.HandshakeTimeoutMS;
+      Session.IdleTimeoutMS:=Config.IdleTimeoutMS;
+      Session.SupportedEnhancedCapabilities:=Config.EnhancedCapabilities;
+      Session.Authorizer:=FServer.Authorizer;
+      Session.AttachBuffer(FServer.PlaybackBuffer);
+      ConnectedNotified:=True;
+      FServer.NotifyClientConnected(Session);
+      Session.Run(FServer.HandleSessionPacket, FServer.HandleSessionLog);
+    except
+      on E: Exception do
+        FServer.Log(llError, 'session', E.Message);
+    end;
   finally
-    Session.Free;
-    FServer.ReleaseSessionSlot;
+    try
+      if ConnectedNotified then
+        FServer.NotifyClientDisconnected(Session);
+    finally
+      FConnection.Close;
+      Session.Free;
+      FServer.ReleaseSessionSlot;
+    end;
   end;
 end;
 
@@ -210,6 +241,7 @@ begin
     FConfig.BufferMaxDurationMS);
   FPlaybackBuffer:=FBuffer;
   FLock:=TCriticalSection.Create;
+  FSessionThreads:=TList.Create;
   FLog:=TRtmpLogSink.Create;
   FStats:=TRtmpServerStatsTracker.Create;
   FTransportFactory:=TRtmpPlatformTransportFactory.Create;
@@ -219,12 +251,51 @@ end;
 destructor TRtmpServer.Destroy;
 begin
   Stop;
+  FSessionThreads.Free;
   FAnalyzer.Free;
   FStats.Free;
   FLog.Free;
   FLock.Free;
   FBuffer.Free;
   inherited Destroy;
+end;
+
+function TRtmpServer.GetConfig: TRtmpServerConfig;
+begin
+  FLock.Acquire;
+  try
+    Result:=FConfig;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TRtmpServer.SetConfig(const AValue: TRtmpServerConfig);
+begin
+  FLock.Acquire;
+  try
+    FConfig:=AValue;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TRtmpServer.ReapSessionThreads;
+var
+  I: Integer;
+  SessionThread: TRtmpServerSessionThread;
+begin
+  // Only the accept thread touches this list until Stop has joined it.
+  for I:=FSessionThreads.Count - 1 downto 0 do
+  begin
+    SessionThread:=TRtmpServerSessionThread(FSessionThreads[I]);
+    if SessionThread.Finished then
+    begin
+      SessionThread.WaitFor;
+      FSessionThreads.Delete(I);
+      SessionThread.Free;
+    end;
+  end;
 end;
 
 procedure TRtmpServer.AttachBuffer(ABuffer: TRtmpCircularBuffer);
@@ -509,11 +580,23 @@ begin
     Exit;
   end;
 
-  SessionThread:=TRtmpServerSessionThread.Create(Self, AConnection);
-  SessionThread.Start;
+  SessionThread:=nil;
+  try
+    SessionThread:=TRtmpServerSessionThread.Create(Self, AConnection);
+    FSessionThreads.Add(SessionThread);
+    SessionThread.Start;
+  except
+    FSessionThreads.Remove(SessionThread);
+    SessionThread.Free;
+    AConnection.Close;
+    ReleaseSessionSlot;
+    raise;
+  end;
 end;
 
 procedure TRtmpServer.Stop;
+var
+  I: Integer;
 begin
   if NOT FActive then
     Exit;
@@ -533,6 +616,16 @@ begin
   end;
 
   FListener:=nil;
+  // Session I/O polls cancellation with bounded waits. Transport/TLS objects
+  // are closed by their owning thread, never while it is inside SSL_read.
+  for I:=0 to FSessionThreads.Count - 1 do
+    TRtmpServerSessionThread(FSessionThreads[I]).RequestStop;
+  for I:=0 to FSessionThreads.Count - 1 do
+  begin
+    TRtmpServerSessionThread(FSessionThreads[I]).WaitFor;
+    TRtmpServerSessionThread(FSessionThreads[I]).Free;
+  end;
+  FSessionThreads.Clear;
   Log(llInfo, 'server', 'Server stopped');
 end;
 

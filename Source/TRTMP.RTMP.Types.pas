@@ -98,6 +98,8 @@ type
     MaxChunkStreams: Integer;
     ReadTimeoutMS: Integer;
     WriteTimeoutMS: Integer;
+    HandshakeTimeoutMS: Integer;
+    IdleTimeoutMS: Integer;
     BufferMaxPackets: Integer;
     BufferMaxBytes: UInt64;
     BufferMaxDurationMS: UInt32;
@@ -423,6 +425,8 @@ begin
   Result.MaxChunkStreams:=64;
   Result.ReadTimeoutMS:=10000;
   Result.WriteTimeoutMS:=10000;
+  Result.HandshakeTimeoutMS:=10000;
+  Result.IdleTimeoutMS:=30000;
   Result.BufferMaxPackets:=4096;
   Result.BufferMaxBytes:=64 * 1024 * 1024;
   Result.BufferMaxDurationMS:=0;
