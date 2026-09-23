@@ -24,6 +24,7 @@ uses
   TRTMP.RTMP.Types;
 
 type
+  // Packet is borrowed for the callback only. CloneShallow before retaining it.
   TRtmpPacketEvent = procedure(Sender: TObject; Session: TRtmpServerSession;
     Packet: TRtmpPacket) of object;
   TRtmpSessionEvent = procedure(Sender: TObject; Session: TRtmpServerSession) of object;
@@ -342,10 +343,11 @@ begin
 
   ASession.NotePacket(APacket);
   FStats.NotePacket(APacket);
-  if FConfig.EnableAnalyzer AND (FAnalyzer <> nil) then
+  if (NOT FConfig.ExternalPacketRouting) AND FConfig.EnableAnalyzer AND
+    (FAnalyzer <> nil) then
     FAnalyzer.Feed(APacket);
 
-  if FBuffer <> nil then
+  if (NOT FConfig.ExternalPacketRouting) AND (FBuffer <> nil) then
   begin
     if FBuffer.PushAndGetStats(APacket.CloneShallow, BufferStatsBefore,
       BufferStatsAfter) AND
@@ -366,12 +368,13 @@ end;
 function TRtmpServer.GetStats: TRtmpServerStats;
 begin
   Result:=FStats.Snapshot;
-  if FBuffer <> nil then
+  if (NOT FConfig.ExternalPacketRouting) AND (FBuffer <> nil) then
   begin
     Result.Buffer:=FBuffer.GetStats;
     Inc(Result.DroppedPackets, Result.Buffer.EvictedPackets);
   end;
-  if FConfig.EnableAnalyzer AND (FAnalyzer <> nil) then
+  if (NOT FConfig.ExternalPacketRouting) AND FConfig.EnableAnalyzer AND
+    (FAnalyzer <> nil) then
     Result.Analysis:=FAnalyzer.GetSnapshot;
 end;
 
@@ -415,7 +418,7 @@ var
   SourceID: string;
 begin
   FStats.NotePublishStarted;
-  if FAnalyzer <> nil then
+  if (NOT FConfig.ExternalPacketRouting) AND (FAnalyzer <> nil) then
     FAnalyzer.Reset;
   SourceID:=SessionSourceID(Session);
   if FPacketSink <> nil then

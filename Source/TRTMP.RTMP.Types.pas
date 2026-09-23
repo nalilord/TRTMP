@@ -104,6 +104,7 @@ type
     BufferMaxBytes: UInt64;
     BufferMaxDurationMS: UInt32;
     EnableAnalyzer: Boolean;
+    ExternalPacketRouting: Boolean;
     AllowPlay: Boolean;
     AllowPublishWithoutFCPublish: Boolean;
     EnhancedCapabilities: UInt32;
@@ -432,6 +433,7 @@ begin
   Result.BufferMaxBytes:=64 * 1024 * 1024;
   Result.BufferMaxDurationMS:=0;
   Result.EnableAnalyzer:=True;
+  Result.ExternalPacketRouting:=False;
   Result.AllowPlay:=True;
   Result.AllowPublishWithoutFCPublish:=True;
   Result.EnhancedCapabilities:=RTMP_DEFAULT_ENHANCED_CAPABILITIES;

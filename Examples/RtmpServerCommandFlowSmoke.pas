@@ -67,6 +67,7 @@ type
 
   TServerCommandFlowSmoke = class
   private
+    FExternalBuffer: TRtmpCircularBuffer;
     FLogs: TStringList;
     FPublishStopCount: Integer;
     FPublishStopStreamName: string;
@@ -77,12 +78,15 @@ type
     function BuildObject(const APairs: array of const): TRtmpAmf0Object;
     procedure HandlePublishStopped(Sender: TObject; Session: TRtmpServerSession);
     procedure HandlePublishStarted(Sender: TObject; Session: TRtmpServerSession);
+    procedure HandleExternalPacket(Sender: TObject; Session: TRtmpServerSession;
+      Packet: TRtmpPacket);
     procedure HandleServerLog(Sender: TObject; ALevel: TRtmpLogLevel;
       const ACategory, AMessage: string);
     function LogContains(const AFragment: string): Boolean;
     function ReadExact(const AConnection: IRtmpConnection; ACount, ATimeoutMS: Integer;
       out ABytes: TBytes): Boolean;
-    procedure RestartServer(APort: Word; AAllowPlay: Boolean = True);
+    procedure RestartServer(APort: Word; AAllowPlay: Boolean = True;
+      AExternalRouting: Boolean = False);
     procedure SendCommandMessage(const AConnection: IRtmpConnection; AChunkStreamID,
       AMessageStreamID: UInt32; const AValues: array of TObject);
     procedure SendConnect(const AConnection: IRtmpConnection; const AApp, ATcUrl: string);
@@ -104,6 +108,7 @@ type
     procedure TestAmf3CommandRejected;
     procedure TestAdmission;
     procedure TestAuthorization;
+    procedure TestExternalRouting;
     procedure TestPlayBootstrap;
     procedure TestPlayDenied;
     procedure TestPublishBeforeCreateStreamRejected;
@@ -113,6 +118,7 @@ type
     function WaitForActiveSessions(AExpected: Integer; ATimeoutMS: Integer): Boolean;
     function WaitForActivePublishes(AExpected: Integer; ATimeoutMS: Integer): Boolean;
     function WaitForAdmissionIdle(const AProbe: IAdmissionProbe; ATimeoutMS: Integer): Boolean;
+    function WaitForExternalPackets(AExpected: Integer; ATimeoutMS: Integer): Boolean;
     function WaitForLog(const AFragment: string; ATimeoutMS: Integer): Boolean;
     function WaitForStatus(const AConnection: IRtmpConnection; const ACode: string;
       ATimeoutMS: Integer; out AUnexpectedPlayOrMedia: Boolean): Boolean;
@@ -232,6 +238,7 @@ constructor TServerCommandFlowSmoke.Create;
 begin
   inherited Create;
   FLogs:=TStringList.Create;
+  FExternalBuffer:=nil;
   FPublishStopCount:=0;
   FPublishStopStreamName:='';
   FRequestReconnectOnPublish:=False;
@@ -242,6 +249,7 @@ end;
 destructor TServerCommandFlowSmoke.Destroy;
 begin
   StopServer;
+  FExternalBuffer.Free;
   FLogs.Free;
   inherited Destroy;
 end;
@@ -344,6 +352,13 @@ begin
       Session.RequestReconnect('/redirected-live', 'Command-flow smoke'));
 end;
 
+procedure TServerCommandFlowSmoke.HandleExternalPacket(Sender: TObject;
+  Session: TRtmpServerSession; Packet: TRtmpPacket);
+begin
+  if FExternalBuffer <> nil then
+    FExternalBuffer.Push(Packet.CloneShallow);
+end;
+
 function TServerCommandFlowSmoke.LogContains(const AFragment: string): Boolean;
 var
   I: Integer;
@@ -373,7 +388,8 @@ begin
   Result:=True;
 end;
 
-procedure TServerCommandFlowSmoke.RestartServer(APort: Word; AAllowPlay: Boolean);
+procedure TServerCommandFlowSmoke.RestartServer(APort: Word;
+  AAllowPlay, AExternalRouting: Boolean);
 var
   Config: TRtmpServerConfig;
 begin
@@ -387,6 +403,7 @@ begin
   Config.BindAddress:='127.0.0.1';
   Config.Port:=APort;
   Config.AllowPlay:=AAllowPlay;
+  Config.ExternalPacketRouting:=AExternalRouting;
   FServer.Config:=Config;
   FServer.Authorizer:=TCommandFlowAuthorizer.Create;
   FServer.LogSink.OnLog:=HandleServerLog;
@@ -401,6 +418,7 @@ begin
   TestAmf3CommandRejected;
   TestAdmission;
   TestAuthorization;
+  TestExternalRouting;
   TestPlayBootstrap;
   TestPlayDenied;
   TestPublishBeforeCreateStreamRejected;
@@ -774,6 +792,44 @@ begin
   end;
 end;
 
+procedure TServerCommandFlowSmoke.TestExternalRouting;
+var
+  Connection: IRtmpConnection;
+  Stats: TRtmpServerStats;
+  UnexpectedMedia: Boolean;
+begin
+  RestartServer(1967, False, True);
+  FExternalBuffer:=TRtmpCircularBuffer.Create(8, 8192);
+  FServer.OnData:=HandleExternalPacket;
+  Connection:=FTransportFactory.CreateClientConnection(
+    TRtmpSocketEndpoint.Create('127.0.0.1', 1967), 3000);
+  try
+    WriteHandshake(Connection);
+    SendConnect(Connection, 'live', 'rtmp://127.0.0.1:1967/live');
+    SendCreateStream(Connection);
+    SendPublish(Connection, 'external-routing');
+    AssertTrue('external routing publisher did not start',
+      WaitForStatus(Connection, 'NetStream.Publish.Start', 3000, UnexpectedMedia));
+    SendRtmpMessage(Connection, 4, 1, RtmpMessageTypeID(mtAudio), 0,
+      Bytes([$AF, $00, $12, $10]));
+    AssertTrue('external owner did not receive packet',
+      WaitForExternalPackets(1, 3000));
+    Stats:=FServer.GetStats;
+    AssertTrue('server did not count externally routed packet',
+      Stats.PacketsReceived = 1);
+    AssertTrue('external packet entered shared server buffer',
+      (FServer.Buffer.Count = 0) AND (Stats.Buffer.TotalPacketsPushed = 0));
+    AssertTrue('external packet entered shared analyzer',
+      Stats.Analysis.AudioCodec = '');
+    StopServer;
+    AssertTrue('server destroyed daemon-owned buffer', FExternalBuffer.Count = 1);
+  finally
+    Connection.Close;
+    StopServer;
+    FreeAndNil(FExternalBuffer);
+  end;
+end;
+
 procedure TServerCommandFlowSmoke.TestPlayBootstrap;
 var
   Buffer: array[0..4095] of Byte;
@@ -1138,6 +1194,21 @@ begin
   Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
   repeat
     Result:=(AProbe.ActiveSession = 0) AND (FServer.GetStats.ActivePublishes = 0);
+    if Result then
+      Exit;
+    Sleep(20);
+  until RtmpGetTickCount64 >= Deadline;
+  Result:=False;
+end;
+
+function TServerCommandFlowSmoke.WaitForExternalPackets(AExpected: Integer;
+  ATimeoutMS: Integer): Boolean;
+var
+  Deadline: UInt64;
+begin
+  Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
+  repeat
+    Result:=(FExternalBuffer <> nil) AND (FExternalBuffer.Count = AExpected);
     if Result then
       Exit;
     Sleep(20);
