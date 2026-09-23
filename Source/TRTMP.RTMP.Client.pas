@@ -32,6 +32,7 @@ type
     FOnDisconnected: TRtmpClientEvent;
     FOnReconnect: TRtmpClientEvent;
     FRelayThread: TThread;
+    FStopping: Boolean;
     FState: TRtmpClientState;
     FStartedAt: TRtmpTick;
     FStats: TRtmpClientStats;
@@ -1871,9 +1872,6 @@ procedure TRtmpClient.Start;
 var
   EnhancedCodecArray: TRtmpAmf0StrictArray;
 begin
-  if CurrentState <> csStopped then
-    Exit;
-
   if Trim(FConfig.EnhancedCodecs) <> '' then
   begin
     EnhancedCodecArray:=BuildEnhancedCodecArray(FConfig.EnhancedCodecs);
@@ -1889,31 +1887,58 @@ begin
       'Reconnect boundary timeout %d ms must not be negative',
       [FConfig.ReconnectBoundaryTimeoutMS]);
 
-  ResetStats;
-  FOutChunkSize:=UInt32(FConfig.OutChunkSize);
-  if FOutChunkSize = 0 then
-    FOutChunkSize:=4096;
-
-  FRelayThread:=TRtmpClientRelayThread.Create(Self);
-  FRelayThread.Start;
+  FLock.Acquire;
+  try
+    if FStopping OR (FRelayThread <> nil) OR (FState <> csStopped) then
+      Exit;
+    FillChar(FStats, SizeOf(FStats), 0);
+    FStartedAt:=RtmpGetTickCount64;
+    FLastBitrateTick:=FStartedAt;
+    FLastBitrateBytes:=0;
+    FOutChunkSize:=UInt32(FConfig.OutChunkSize);
+    if FOutChunkSize = 0 then
+      FOutChunkSize:=4096;
+    FRelayThread:=TRtmpClientRelayThread.Create(Self);
+    try
+      FRelayThread.Start;
+    except
+      FreeAndNil(FRelayThread);
+      raise;
+    end;
+  finally
+    FLock.Release;
+  end;
 end;
 
 procedure TRtmpClient.Stop;
+var
+  RelayThread: TThread;
 begin
-  if CurrentState = csStopped then
-    Exit;
-
-  ChangeState(csStopped);
-
-  if FRelayThread <> nil then
-  begin
-    FRelayThread.Terminate;
+  FLock.Acquire;
+  try
+    if FStopping then
+      Exit;
+    FStopping:=True;
+    FState:=csStopped;
+    RelayThread:=FRelayThread;
+    if RelayThread <> nil then
+      RelayThread.Terminate;
+  finally
+    FLock.Release;
+  end;
+  try
     CloseConnection;
-    FRelayThread.WaitFor;
-    FreeAndNil(FRelayThread);
-  end
-  else
-    CloseConnection;
+    if RelayThread <> nil then
+      RelayThread.WaitFor;
+  finally
+    FLock.Acquire;
+    try
+      FreeAndNil(FRelayThread);
+      FStopping:=False;
+    finally
+      FLock.Release;
+    end;
+  end;
 
   Log(llInfo, 'client', 'Client relay stopped');
 end;
