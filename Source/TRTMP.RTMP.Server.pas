@@ -57,6 +57,8 @@ type
     FActive: Boolean;
     FAnalyzer: TRtmpAnalyzer;
     FAuthorizer: IRtmpServerAuthorizer;
+    FPublishAdmission: IRtmpPublishAdmission;
+    FNextSessionID: UInt64;
     FBuffer: TRtmpCircularBuffer;
     FPlaybackBuffer: TRtmpCircularBuffer;
     FConfig: TRtmpServerConfig;
@@ -75,11 +77,14 @@ type
     FTransportFactory: IRtmpTransportFactory;
     FMinLogLevel: TRtmpLogLevel;
     function GetSessionSlotCount: Integer;
+    function AllocateSessionID: UInt64;
     function GetConfig: TRtmpServerConfig;
     procedure SetConfig(const AValue: TRtmpServerConfig);
     procedure ReapSessionThreads;
     procedure HandleSessionLog(Session: TRtmpServerSession; ALevel: TRtmpLogLevel;
       const ACategory, AMessage: string);
+    procedure HandlePublishStarted(Session: TRtmpServerSession);
+    procedure HandlePublishStopped(Session: TRtmpServerSession);
     procedure HandleSessionPacket(Session: TRtmpServerSession; Packet: TRtmpPacket);
     procedure Log(ALevel: TRtmpLogLevel; const ACategory, AMessage: string);
     procedure NoteBufferPressure(const ABefore, AAfter: TRtmpBufferStats);
@@ -104,6 +109,7 @@ type
 
     property Active: Boolean read FActive;
     property Authorizer: IRtmpServerAuthorizer read FAuthorizer write FAuthorizer;
+    property PublishAdmission: IRtmpPublishAdmission read FPublishAdmission write FPublishAdmission;
     property Buffer: TRtmpCircularBuffer read FBuffer;
     property PlaybackBuffer: TRtmpCircularBuffer read FPlaybackBuffer;
     property Config: TRtmpServerConfig read GetConfig write SetConfig;
@@ -190,6 +196,11 @@ begin
         Exit;
       Config:=FServer.Config;
       Session:=TRtmpServerSession.Create(FConnection);
+      Session.SessionID:=FServer.AllocateSessionID;
+      Session.AllowPlay:=Config.AllowPlay;
+      Session.PublishAdmission:=FServer.PublishAdmission;
+      Session.OnPublishStarted:=FServer.HandlePublishStarted;
+      Session.OnPublishStopped:=FServer.HandlePublishStopped;
       Session.OnStopRequested:=IsStopRequested;
       Session.MinLogLevel:=llDebug;
       Session.MaxInChunkSize:=Config.MaxChunkSize;
@@ -374,48 +385,55 @@ begin
   end;
 end;
 
+function TRtmpServer.AllocateSessionID: UInt64;
+begin
+  Result:=0;
+  FLock.Acquire;
+  try
+    Inc(FNextSessionID);
+    if FNextSessionID = 0 then
+      Inc(FNextSessionID);
+    Result:=FNextSessionID;
+  finally
+    FLock.Release;
+  end;
+end;
+
 procedure TRtmpServer.HandleSessionLog(Session: TRtmpServerSession;
   ALevel: TRtmpLogLevel; const ACategory, AMessage: string);
-var
-  PublishStopped: Boolean;
-  PublishStarted: Boolean;
-  SourceID: string;
 begin
-  PublishStarted:=(ALevel = llInfo) AND
-    (Pos('publish stream=', AMessage) = 1);
-  PublishStopped:=(ALevel = llInfo) AND Session.HasActivePublish AND
-    ((Pos('FCUnpublish stream=', AMessage) = 1) OR
-     (Pos('deleteStream received for stream=', AMessage) = 1) OR
-     (Pos('closeStream received for stream=', AMessage) = 1));
-
   if ALevel >= llWarning then
     FStats.NoteLog(ALevel, ACategory, AMessage);
 
   if ALevel >= FMinLogLevel then
     Log(ALevel, ACategory,
       Format('%s:%d %s', [Session.RemoteAddress, Session.RemotePort, AMessage]));
+end;
 
-  if PublishStarted then
-  begin
-    FStats.NotePublishStarted;
-    if FAnalyzer <> nil then
-      FAnalyzer.Reset;
-    SourceID:=SessionSourceID(Session);
-    if FPacketSink <> nil then
-      FPacketSink.HandleStreamStarted(SourceID, Session.StreamName);
-    if Assigned(FOnPublishStarted) then
-      FOnPublishStarted(Self, Session);
-  end;
+procedure TRtmpServer.HandlePublishStarted(Session: TRtmpServerSession);
+var
+  SourceID: string;
+begin
+  FStats.NotePublishStarted;
+  if FAnalyzer <> nil then
+    FAnalyzer.Reset;
+  SourceID:=SessionSourceID(Session);
+  if FPacketSink <> nil then
+    FPacketSink.HandleStreamStarted(SourceID, Session.StreamName);
+  if Assigned(FOnPublishStarted) then
+    FOnPublishStarted(Self, Session);
+end;
 
-  if PublishStopped then
-  begin
-    FStats.NotePublishStopped;
-    SourceID:=SessionSourceID(Session);
-    if FPacketSink <> nil then
-      FPacketSink.HandleStreamStopped(SourceID, Session.StreamName);
-    if Assigned(FOnPublishStopped) then
-      FOnPublishStopped(Self, Session);
-  end;
+procedure TRtmpServer.HandlePublishStopped(Session: TRtmpServerSession);
+var
+  SourceID: string;
+begin
+  FStats.NotePublishStopped;
+  SourceID:=SessionSourceID(Session);
+  if FPacketSink <> nil then
+    FPacketSink.HandleStreamStopped(SourceID, Session.StreamName);
+  if Assigned(FOnPublishStopped) then
+    FOnPublishStopped(Self, Session);
 end;
 
 procedure TRtmpServer.HandleSessionPacket(Session: TRtmpServerSession;
@@ -467,19 +485,10 @@ begin
 end;
 
 procedure TRtmpServer.NotifyClientDisconnected(Session: TRtmpServerSession);
-var
-  SourceID: string;
 begin
   FStats.NoteSessionStopped;
   if Session.HasActivePublish then
-  begin
-    FStats.NotePublishStopped;
-    SourceID:=SessionSourceID(Session);
-    if FPacketSink <> nil then
-      FPacketSink.HandleStreamStopped(SourceID, Session.StreamName);
-    if Assigned(FOnPublishStopped) then
-      FOnPublishStopped(Self, Session);
-  end;
+    HandlePublishStopped(Session);
   if Assigned(FOnClientDisconnected) then
     FOnClientDisconnected(Self, Session);
 end;

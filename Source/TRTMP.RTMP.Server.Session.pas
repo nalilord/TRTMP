@@ -26,6 +26,7 @@ type
   TRtmpSessionLogEvent = procedure(Session: TRtmpServerSession;
     ALevel: TRtmpLogLevel; const ACategory, AMessage: string) of object;
   TRtmpSessionStopQuery = function: Boolean of object;
+  TRtmpSessionLifecycleEvent = procedure(Session: TRtmpServerSession) of object;
 
   TRtmpServerSession = class
   private
@@ -35,6 +36,12 @@ type
     FRemotePort: Word;
     FAppName: string;
     FAuthorizer: IRtmpServerAuthorizer;
+    FPublishAdmission: IRtmpPublishAdmission;
+    FSessionID: UInt64;
+    FAllowPlay: Boolean;
+    FPublishReserved: Boolean;
+    FOnPublishStarted: TRtmpSessionLifecycleEvent;
+    FOnPublishStopped: TRtmpSessionLifecycleEvent;
     FTcUrl: string;
     FFlashVersion: string;
     FBuffer: TRtmpCircularBuffer;
@@ -88,6 +95,8 @@ type
     procedure EmitLog(AOnLog: TRtmpSessionLogEvent; ALevel: TRtmpLogLevel;
       const ACategory, AMessage: string);
     procedure ClearPlayState(AClearMessageStream: Boolean = False);
+    procedure ReleasePublishReservation;
+    procedure StopPublish;
     function EnsureCommandState(const ACommandName: string;
       const AAllowedStates: array of TRtmpSessionState; ATransactionID: Double;
       AMessageStreamID: UInt32; const AErrorCode, ADescription: string;
@@ -146,6 +155,11 @@ type
     property RemotePort: Word read FRemotePort;
     property AppName: string read FAppName write FAppName;
     property Authorizer: IRtmpServerAuthorizer read FAuthorizer write FAuthorizer;
+    property PublishAdmission: IRtmpPublishAdmission read FPublishAdmission write FPublishAdmission;
+    property SessionID: UInt64 read FSessionID write FSessionID;
+    property AllowPlay: Boolean read FAllowPlay write FAllowPlay;
+    property OnPublishStarted: TRtmpSessionLifecycleEvent read FOnPublishStarted write FOnPublishStarted;
+    property OnPublishStopped: TRtmpSessionLifecycleEvent read FOnPublishStopped write FOnPublishStopped;
     property TcUrl: string read FTcUrl write FTcUrl;
     property FlashVersion: string read FFlashVersion write FFlashVersion;
     property EnhancedCodecs: string read FEnhancedCodecs;
@@ -403,6 +417,8 @@ begin
   FOutChunkSize:=4096;
   FAckWindowSize:=5000000;
   FHasActivePublish:=False;
+  FPublishReserved:=False;
+  FAllowPlay:=True;
   FHasActivePlay:=False;
   FLastPublishedStreamName:='';
   FEnhancedCodecs:='';
@@ -441,9 +457,32 @@ end;
 
 destructor TRtmpServerSession.Destroy;
 begin
+  ReleasePublishReservation;
   FReassembler.Free;
   FLock.Free;
   inherited Destroy;
+end;
+
+procedure TRtmpServerSession.ReleasePublishReservation;
+begin
+  if NOT FPublishReserved then
+    Exit;
+  FPublishReserved:=False;
+  if FPublishAdmission <> nil then
+    FPublishAdmission.ReleasePublish(FSessionID);
+end;
+
+procedure TRtmpServerSession.StopPublish;
+begin
+  if NOT FHasActivePublish then
+    Exit;
+  try
+    if Assigned(FOnPublishStopped) then
+      FOnPublishStopped(Self);
+  finally
+    FHasActivePublish:=False;
+    ReleasePublishReservation;
+  end;
 end;
 
 function TRtmpServerSession.IsLogEnabled(ALevel: TRtmpLogLevel): Boolean;
@@ -849,6 +888,14 @@ begin
         Exit(False);
       end;
 
+      if NOT FAllowPlay then
+      begin
+        FState:=ssError;
+        SendOnStatusError(AMessage.MessageStreamID, 'NetStream.Play.Failed',
+          'Playback is disabled.');
+        Exit(False);
+      end;
+
       FStreamName:=PlayName;
       NormalizeAppAndStream(FAppName, FTcUrl, FStreamName);
       FHasActivePlay:=True;
@@ -884,15 +931,16 @@ begin
       if PublishType = '' then
         PublishType:='live';
 
+      PublishAuthorization:=Default(TRtmpPublishAuthorizationContext);
+      PublishAuthorization.RemoteAddress:=FRemoteAddress;
+      PublishAuthorization.RemotePort:=FRemotePort;
+      PublishAuthorization.App:=FAppName;
+      PublishAuthorization.TcUrl:=FTcUrl;
+      PublishAuthorization.StreamName:=FStreamName;
+      PublishAuthorization.PublishType:=PublishType;
+
       if FAuthorizer <> nil then
       begin
-        PublishAuthorization:=Default(TRtmpPublishAuthorizationContext);
-        PublishAuthorization.RemoteAddress:=FRemoteAddress;
-        PublishAuthorization.RemotePort:=FRemotePort;
-        PublishAuthorization.App:=FAppName;
-        PublishAuthorization.TcUrl:=FTcUrl;
-        PublishAuthorization.StreamName:=FStreamName;
-        PublishAuthorization.PublishType:=PublishType;
         try
           AuthorizationDecision:=FAuthorizer.AuthorizePublish(PublishAuthorization);
         except
@@ -923,11 +971,39 @@ begin
         end;
       end;
 
+      if FPublishAdmission <> nil then
+      begin
+        try
+          AuthorizationDecision:=FPublishAdmission.AdmitPublish(FSessionID, PublishAuthorization);
+        except
+          on E: Exception do
+          begin
+            EmitLog(AOnLog, llError, 'admission', 'Publish admission failed');
+            AuthorizationDecision:=TRtmpAuthorizationDecision.Deny('', 'Publish admission failed.');
+          end;
+        end;
+        if NOT AuthorizationDecision.Allowed then
+        begin
+          AuthorizationCode:=AuthorizationDecision.Code;
+          if AuthorizationCode = '' then
+            AuthorizationCode:='NetStream.Publish.Rejected';
+          AuthorizationDescription:=AuthorizationDecision.Description;
+          if AuthorizationDescription = '' then
+            AuthorizationDescription:='Publish admission denied.';
+          FState:=ssError;
+          SendOnStatusError(AMessage.MessageStreamID, AuthorizationCode, AuthorizationDescription);
+          Exit(False);
+        end;
+        FPublishReserved:=True;
+      end;
+
       FHasActivePublish:=True;
       FLastPublishedStreamName:=FStreamName;
       FState:=ssPublishing;
       SendPublishStart;
       FState:=ssStreaming;
+      if Assigned(FOnPublishStarted) then
+        FOnPublishStarted(Self);
       EmitLog(AOnLog, llInfo, 'session',
         Format('publish stream=%s type=%s', [FStreamName, PublishType]));
     end
@@ -943,7 +1019,7 @@ begin
     begin
       EmitLog(AOnLog, llInfo, 'session',
         Format('FCUnpublish stream=%s', [StreamNameForLog]));
-      FHasActivePublish:=False;
+      StopPublish;
       ClearPlayState(False);
       FState:=ssConnectedCommand;
       FStreamName:='';
@@ -952,7 +1028,7 @@ begin
     begin
       EmitLog(AOnLog, llInfo, 'session',
         Format('%s received for stream=%s', [Command.CommandName, StreamNameForLog]));
-      FHasActivePublish:=False;
+      StopPublish;
       ClearPlayState(True);
       FState:=ssConnectedCommand;
       FStreamName:='';

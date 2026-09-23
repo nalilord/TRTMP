@@ -49,6 +49,15 @@ type
       const AContext: TRtmpPublishAuthorizationContext): TRtmpAuthorizationDecision;
   end;
 
+  // Admission owns an accepted publish reservation until ReleasePublish.
+  // Calls are serialized by the implementation when multiple sessions race.
+  IRtmpPublishAdmission = interface(IInterface)
+    ['{F8B89ED3-FF37-44C0-A1D1-B7A97A4E1057}']
+    function AdmitPublish(ASessionID: UInt64;
+      const AContext: TRtmpPublishAuthorizationContext): TRtmpAuthorizationDecision;
+    procedure ReleasePublish(ASessionID: UInt64);
+  end;
+
 function RtmpExtractQueryParameter(const AValue,
   AName: string): string;
 

@@ -13,6 +13,7 @@ uses
   {$ENDIF}
   Classes,
   SysUtils,
+  SyncObjs,
   TRTMP.RTMP.Auth,
   TRTMP.RTMP.Protocol.AMF0,
   TRTMP.RTMP.Media.Buffer,
@@ -29,6 +30,33 @@ uses
   TRTMP.RTMP.Types;
 
 type
+  IAdmissionProbe = interface(IInterface)
+    ['{A7CD9C47-BDEE-4783-8EC2-C34B0D93A8AA}']
+    function ActiveSession: UInt64;
+    function AcceptedCount: Integer;
+    function DeniedCount: Integer;
+    function ReleasedCount: Integer;
+  end;
+
+  TCommandFlowAdmission = class(TInterfacedObject, IRtmpPublishAdmission, IAdmissionProbe)
+  private
+    FLock: TCriticalSection;
+    FActiveSession: UInt64;
+    FAcceptedCount: Integer;
+    FDeniedCount: Integer;
+    FReleasedCount: Integer;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    function AdmitPublish(ASessionID: UInt64;
+      const AContext: TRtmpPublishAuthorizationContext): TRtmpAuthorizationDecision;
+    procedure ReleasePublish(ASessionID: UInt64);
+    function ActiveSession: UInt64;
+    function AcceptedCount: Integer;
+    function DeniedCount: Integer;
+    function ReleasedCount: Integer;
+  end;
+
   TCommandFlowAuthorizer = class(TInterfacedObject, IRtmpServerAuthorizer)
   public
     function AuthorizeConnect(
@@ -54,7 +82,7 @@ type
     function LogContains(const AFragment: string): Boolean;
     function ReadExact(const AConnection: IRtmpConnection; ACount, ATimeoutMS: Integer;
       out ABytes: TBytes): Boolean;
-    procedure RestartServer(APort: Word);
+    procedure RestartServer(APort: Word; AAllowPlay: Boolean = True);
     procedure SendCommandMessage(const AConnection: IRtmpConnection; AChunkStreamID,
       AMessageStreamID: UInt32; const AValues: array of TObject);
     procedure SendConnect(const AConnection: IRtmpConnection; const AApp, ATcUrl: string);
@@ -74,20 +102,113 @@ type
       AFlags: TRtmpPacketFlags);
     procedure StopServer;
     procedure TestAmf3CommandRejected;
+    procedure TestAdmission;
     procedure TestAuthorization;
     procedure TestPlayBootstrap;
+    procedure TestPlayDenied;
     procedure TestPublishBeforeCreateStreamRejected;
     procedure TestReconnectRequest;
     procedure TestTeardownCommands;
     procedure TestUnsupportedMessageIgnored;
     function WaitForActiveSessions(AExpected: Integer; ATimeoutMS: Integer): Boolean;
+    function WaitForActivePublishes(AExpected: Integer; ATimeoutMS: Integer): Boolean;
+    function WaitForAdmissionIdle(const AProbe: IAdmissionProbe; ATimeoutMS: Integer): Boolean;
     function WaitForLog(const AFragment: string; ATimeoutMS: Integer): Boolean;
+    function WaitForStatus(const AConnection: IRtmpConnection; const ACode: string;
+      ATimeoutMS: Integer; out AUnexpectedPlayOrMedia: Boolean): Boolean;
     procedure WriteHandshake(const AConnection: IRtmpConnection);
   public
     constructor Create;
     destructor Destroy; override;
     procedure Run;
   end;
+
+constructor TCommandFlowAdmission.Create;
+begin
+  inherited Create;
+  FLock:=TCriticalSection.Create;
+end;
+
+destructor TCommandFlowAdmission.Destroy;
+begin
+  FLock.Free;
+  inherited Destroy;
+end;
+
+function TCommandFlowAdmission.AdmitPublish(ASessionID: UInt64;
+  const AContext: TRtmpPublishAuthorizationContext): TRtmpAuthorizationDecision;
+begin
+  FLock.Acquire;
+  try
+    if (ASessionID <> 0) AND (FActiveSession = 0) then
+    begin
+      FActiveSession:=ASessionID;
+      Inc(FAcceptedCount);
+      Result:=TRtmpAuthorizationDecision.Allow;
+    end
+    else
+    begin
+      Inc(FDeniedCount);
+      Result:=TRtmpAuthorizationDecision.Deny('', 'A publisher is already active.');
+    end;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TCommandFlowAdmission.ReleasePublish(ASessionID: UInt64);
+begin
+  FLock.Acquire;
+  try
+    if (ASessionID <> 0) AND (FActiveSession = ASessionID) then
+    begin
+      FActiveSession:=0;
+      Inc(FReleasedCount);
+    end;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TCommandFlowAdmission.ActiveSession: UInt64;
+begin
+  FLock.Acquire;
+  try
+    Result:=FActiveSession;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TCommandFlowAdmission.AcceptedCount: Integer;
+begin
+  FLock.Acquire;
+  try
+    Result:=FAcceptedCount;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TCommandFlowAdmission.DeniedCount: Integer;
+begin
+  FLock.Acquire;
+  try
+    Result:=FDeniedCount;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TCommandFlowAdmission.ReleasedCount: Integer;
+begin
+  FLock.Acquire;
+  try
+    Result:=FReleasedCount;
+  finally
+    FLock.Release;
+  end;
+end;
 
 function TCommandFlowAuthorizer.AuthorizeConnect(
   const AContext: TRtmpConnectAuthorizationContext): TRtmpAuthorizationDecision;
@@ -252,7 +373,7 @@ begin
   Result:=True;
 end;
 
-procedure TServerCommandFlowSmoke.RestartServer(APort: Word);
+procedure TServerCommandFlowSmoke.RestartServer(APort: Word; AAllowPlay: Boolean);
 var
   Config: TRtmpServerConfig;
 begin
@@ -265,6 +386,7 @@ begin
   Config:=DefaultRtmpServerConfig;
   Config.BindAddress:='127.0.0.1';
   Config.Port:=APort;
+  Config.AllowPlay:=AAllowPlay;
   FServer.Config:=Config;
   FServer.Authorizer:=TCommandFlowAuthorizer.Create;
   FServer.LogSink.OnLog:=HandleServerLog;
@@ -277,8 +399,10 @@ end;
 procedure TServerCommandFlowSmoke.Run;
 begin
   TestAmf3CommandRejected;
+  TestAdmission;
   TestAuthorization;
   TestPlayBootstrap;
+  TestPlayDenied;
   TestPublishBeforeCreateStreamRejected;
   TestReconnectRequest;
   TestTeardownCommands;
@@ -550,6 +674,104 @@ begin
     Connection.Close;
   end;
   StopServer;
+end;
+
+procedure TServerCommandFlowSmoke.TestAdmission;
+var
+  Admission: IRtmpPublishAdmission;
+  ConnectionOne: IRtmpConnection;
+  ConnectionThree: IRtmpConnection;
+  ConnectionTwo: IRtmpConnection;
+  Probe: IAdmissionProbe;
+  UnexpectedMedia: Boolean;
+begin
+  RestartServer(1965);
+  Admission:=TCommandFlowAdmission.Create;
+  Probe:=Admission AS IAdmissionProbe;
+  FServer.PublishAdmission:=Admission;
+  ConnectionOne:=FTransportFactory.CreateClientConnection(
+    TRtmpSocketEndpoint.Create('127.0.0.1', 1965), 3000);
+  ConnectionTwo:=nil;
+  ConnectionThree:=nil;
+  try
+    WriteHandshake(ConnectionOne);
+    SendConnect(ConnectionOne, 'live', 'rtmp://127.0.0.1:1965/live');
+    SendCreateStream(ConnectionOne);
+    SendPublish(ConnectionOne, 'first');
+    AssertTrue('first publisher did not receive publish success',
+      WaitForStatus(ConnectionOne, 'NetStream.Publish.Start', 3000, UnexpectedMedia));
+    AssertTrue('first publisher did not enter active lifecycle',
+      WaitForActivePublishes(1, 3000));
+    AssertTrue('first publisher was not admitted',
+      (Probe.ActiveSession <> 0) AND (Probe.AcceptedCount = 1) AND
+      (FServer.GetStats.ActivePublishes = 1));
+
+    ConnectionTwo:=FTransportFactory.CreateClientConnection(
+      TRtmpSocketEndpoint.Create('127.0.0.1', 1965), 3000);
+    WriteHandshake(ConnectionTwo);
+    SendConnect(ConnectionTwo, 'live', 'rtmp://127.0.0.1:1965/live');
+    SendCreateStream(ConnectionTwo);
+    SendPublish(ConnectionTwo, 'second');
+    AssertTrue('duplicate publisher did not receive publish rejection',
+      WaitForStatus(ConnectionTwo, 'NetStream.Publish.Rejected', 3000, UnexpectedMedia));
+    AssertTrue('duplicate publisher changed active ownership',
+      (Probe.ActiveSession <> 0) AND (Probe.DeniedCount = 1) AND
+      (FServer.GetStats.ActivePublishes = 1));
+
+    SendFCUnpublish(ConnectionOne, 'first');
+    AssertTrue('FCUnpublish did not release publisher ownership',
+      WaitForAdmissionIdle(Probe, 3000));
+    AssertTrue('FCUnpublish released reservation exactly once',
+      (Probe.ActiveSession = 0) AND (Probe.ReleasedCount = 1));
+
+    ConnectionThree:=FTransportFactory.CreateClientConnection(
+      TRtmpSocketEndpoint.Create('127.0.0.1', 1965), 3000);
+    WriteHandshake(ConnectionThree);
+    SendConnect(ConnectionThree, 'live', 'rtmp://127.0.0.1:1965/live');
+    SendCreateStream(ConnectionThree);
+    SendPublish(ConnectionThree, 'third');
+    AssertTrue('publisher was not accepted after ownership release',
+      WaitForStatus(ConnectionThree, 'NetStream.Publish.Start', 3000, UnexpectedMedia));
+    AssertTrue('third publisher did not own the reservation',
+      (Probe.ActiveSession <> 0) AND (Probe.AcceptedCount = 2));
+    ConnectionThree.Close;
+    AssertTrue('disconnect did not release publisher ownership',
+      WaitForAdmissionIdle(Probe, 3000));
+    AssertTrue('disconnect released reservation exactly once',
+      (Probe.ActiveSession = 0) AND (Probe.ReleasedCount = 2));
+  finally
+    if ConnectionThree <> nil then
+      ConnectionThree.Close;
+    if ConnectionTwo <> nil then
+      ConnectionTwo.Close;
+    ConnectionOne.Close;
+    StopServer;
+  end;
+end;
+
+procedure TServerCommandFlowSmoke.TestPlayDenied;
+var
+  Connection: IRtmpConnection;
+  UnexpectedPlayOrMedia: Boolean;
+begin
+  RestartServer(1966, False);
+  Connection:=FTransportFactory.CreateClientConnection(
+    TRtmpSocketEndpoint.Create('127.0.0.1', 1966), 3000);
+  try
+    WriteHandshake(Connection);
+    SendConnect(Connection, 'live', 'rtmp://127.0.0.1:1966/live');
+    SendCreateStream(Connection);
+    SendPlay(Connection, 'forbidden-play');
+    AssertTrue('disabled playback did not return a failure status',
+      WaitForStatus(Connection, 'NetStream.Play.Failed', 3000, UnexpectedPlayOrMedia));
+    AssertTrue('disabled playback sent play success or media',
+      NOT UnexpectedPlayOrMedia);
+    AssertTrue('disabled playback session did not close',
+      WaitForActiveSessions(0, 3000));
+  finally
+    Connection.Close;
+    StopServer;
+  end;
 end;
 
 procedure TServerCommandFlowSmoke.TestPlayBootstrap;
@@ -893,6 +1115,36 @@ begin
   Result:=False;
 end;
 
+function TServerCommandFlowSmoke.WaitForActivePublishes(AExpected: Integer;
+  ATimeoutMS: Integer): Boolean;
+var
+  Deadline: UInt64;
+begin
+  Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
+  repeat
+    Result:=(FServer <> nil) AND (FServer.GetStats.ActivePublishes = AExpected);
+    if Result then
+      Exit;
+    Sleep(20);
+  until RtmpGetTickCount64 >= Deadline;
+  Result:=False;
+end;
+
+function TServerCommandFlowSmoke.WaitForAdmissionIdle(const AProbe: IAdmissionProbe;
+  ATimeoutMS: Integer): Boolean;
+var
+  Deadline: UInt64;
+begin
+  Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
+  repeat
+    Result:=(AProbe.ActiveSession = 0) AND (FServer.GetStats.ActivePublishes = 0);
+    if Result then
+      Exit;
+    Sleep(20);
+  until RtmpGetTickCount64 >= Deadline;
+  Result:=False;
+end;
+
 function TServerCommandFlowSmoke.WaitForLog(const AFragment: string;
   ATimeoutMS: Integer): Boolean;
 var
@@ -906,6 +1158,67 @@ begin
     Sleep(20);
   until RtmpGetTickCount64 >= Deadline;
   Result:=False;
+end;
+
+function TServerCommandFlowSmoke.WaitForStatus(const AConnection: IRtmpConnection;
+  const ACode: string; ATimeoutMS: Integer;
+  out AUnexpectedPlayOrMedia: Boolean): Boolean;
+var
+  Buffer: array[0..8191] of Byte;
+  Code: string;
+  Command: TRtmpCommandMessage;
+  Deadline: UInt64;
+  MessageOut: TRtmpChunkMessage;
+  Reassembler: TRtmpChunkReassembler;
+  Received: Integer;
+begin
+  Result:=False;
+  AUnexpectedPlayOrMedia:=False;
+  Reassembler:=TRtmpChunkReassembler.Create(128);
+  try
+    Deadline:=RtmpGetTickCount64 + UInt64(ATimeoutMS);
+    repeat
+      Received:=AConnection.Receive(Buffer, SizeOf(Buffer), 200);
+      if Received > 0 then
+      begin
+        Reassembler.AppendBytes(Buffer, Received);
+        while Reassembler.TryReadMessage(MessageOut) do
+        begin
+          if (MessageOut.MessageType = mtSetChunkSize) AND
+            (Length(MessageOut.Payload) >= 4) then
+            Reassembler.InChunkSize:=
+              (UInt32(MessageOut.Payload[0]) SHL 24) OR
+              (UInt32(MessageOut.Payload[1]) SHL 16) OR
+              (UInt32(MessageOut.Payload[2]) SHL 8) OR
+              UInt32(MessageOut.Payload[3]);
+          if MessageOut.MessageType IN [mtDataAMF0, mtAudio, mtVideo] then
+            AUnexpectedPlayOrMedia:=True;
+          if MessageOut.MessageType <> mtCommandAMF0 then
+            Continue;
+          Command:=TRtmpCommandMessage.Create(MessageOut.Payload);
+          try
+            if Command.IsCommand('onStatus') AND
+              (Command.ArgumentCount > 3) AND
+              (Command[3] IS TRtmpAmf0Object) then
+            begin
+              Code:=TRtmpAmf0Object(Command[3]).GetString('code');
+              if SameText(Code, 'NetStream.Play.Start') OR
+                SameText(Code, 'NetStream.Play.Reset') then
+                AUnexpectedPlayOrMedia:=True;
+              if SameText(Code, ACode) then
+                Result:=True;
+            end;
+          finally
+            Command.Free;
+          end;
+        end;
+        if Result then
+          Exit;
+      end;
+    until RtmpGetTickCount64 >= Deadline;
+  finally
+    Reassembler.Free;
+  end;
 end;
 
 procedure TServerCommandFlowSmoke.WriteHandshake(const AConnection: IRtmpConnection);

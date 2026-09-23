@@ -104,6 +104,7 @@ type
     BufferMaxBytes: UInt64;
     BufferMaxDurationMS: UInt32;
     EnableAnalyzer: Boolean;
+    AllowPlay: Boolean;
     AllowPublishWithoutFCPublish: Boolean;
     EnhancedCapabilities: UInt32;
     Tls: TRtmpTlsServerOptions;
@@ -431,6 +432,7 @@ begin
   Result.BufferMaxBytes:=64 * 1024 * 1024;
   Result.BufferMaxDurationMS:=0;
   Result.EnableAnalyzer:=True;
+  Result.AllowPlay:=True;
   Result.AllowPublishWithoutFCPublish:=True;
   Result.EnhancedCapabilities:=RTMP_DEFAULT_ENHANCED_CAPABILITIES;
   Result.Tls:=TRtmpTlsServerOptions.CreateDefault;
