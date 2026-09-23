@@ -45,6 +45,7 @@ type
     procedure ChangeState(AState: TRtmpClientState);
     procedure CloseConnection;
     function CurrentState: TRtmpClientState;
+    function GetState: TRtmpClientState;
     procedure Log(ALevel: TRtmpLogLevel; const ACategory, AMessage: string);
     procedure NoteReconnect;
     procedure NoteReconnectRequest;
@@ -73,7 +74,7 @@ type
     property OnConnected: TRtmpClientEvent read FOnConnected write FOnConnected;
     property OnDisconnected: TRtmpClientEvent read FOnDisconnected write FOnDisconnected;
     property OnReconnect: TRtmpClientEvent read FOnReconnect write FOnReconnect;
-    property State: TRtmpClientState read FState;
+    property State: TRtmpClientState read GetState;
     property PeerEnhancedCapabilities: UInt32
       read GetPeerEnhancedCapabilities;
   end;
@@ -1767,6 +1768,11 @@ begin
   finally
     FLock.Release;
   end;
+end;
+
+function TRtmpClient.GetState: TRtmpClientState;
+begin
+  Result:=CurrentState;
 end;
 
 function TRtmpClient.GetStats: TRtmpClientStats;
