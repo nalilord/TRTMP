@@ -29,6 +29,7 @@ begin
       Client.Start;
       if I MOD 2 = 0 then
         RtmpSleepMS(2);
+      Client.RequestStop;
       Client.Stop;
       Client.Stop;
       Check(Client.State = csStopped, 'client did not stop');

@@ -62,6 +62,7 @@ type
     procedure AttachBuffer(ABuffer: TRtmpCircularBuffer);
     function GetStats: TRtmpClientStats;
     procedure SendPacket(const APacket: TRtmpPacket);
+    procedure RequestStop;
     procedure Start;
     procedure Stop;
 
@@ -1868,6 +1869,19 @@ begin
   NoteSentPacket(APacket);
 end;
 
+procedure TRtmpClient.RequestStop;
+begin
+  FLock.Acquire;
+  try
+    FState:=csStopped;
+    if FRelayThread <> nil then
+      FRelayThread.Terminate;
+  finally
+    FLock.Release;
+  end;
+  CloseConnection;
+end;
+
 procedure TRtmpClient.Start;
 var
   EnhancedCodecArray: TRtmpAmf0StrictArray;
@@ -1927,7 +1941,7 @@ begin
     FLock.Release;
   end;
   try
-    CloseConnection;
+    RequestStop;
     if RelayThread <> nil then
       RelayThread.WaitFor;
   finally
