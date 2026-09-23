@@ -825,23 +825,36 @@ function TRtmpOpenSSLTransportFactory.CreateTlsClientConnection(
 var
   Connection: IRtmpConnection;
   Context: PSSL_CTX;
+  DeadlineMS: UInt64;
+  RemainingMS: Integer;
   SSL: PSSL;
 begin
   Result:=nil;
+  if AConnectTimeoutMS < 1 then
+    raise ERtmpTransportError.Create('TLS connect timeout must be positive');
+  DeadlineMS:=GetTickCount64 + UInt64(AConnectTimeoutMS);
   EnsureOpenSSLLoaded;
   Context:=CreateClientContext(AOptions);
   SSL:=nil;
   Connection:=nil;
   try
+    if GetTickCount64 >= DeadlineMS then
+      raise ERtmpTransportError.Create('TLS connection timed out before TCP connect');
+    RemainingMS:=Integer(DeadlineMS - GetTickCount64);
     Connection:=FNativeFactory.CreateClientConnection(ARemoteEndpoint,
-      AConnectTimeoutMS);
+      RemainingMS);
+    if GetTickCount64 >= DeadlineMS then
+      raise ERtmpTransportError.Create('TLS connection timed out before handshake');
+    RemainingMS:=Integer(DeadlineMS - GetTickCount64);
     SSL:=GSSLNew(Context);
     if SSL = nil then
       RaiseOpenSSLError('creating OpenSSL client connection');
     if GSSLSetFD(SSL, ConnectionSocket(Connection)) <> 1 then
       RaiseOpenSSLError('attaching TLS client socket');
     ConfigureClientIdentity(SSL, AOptions);
-    RunHandshake(SSL, False, ConnectionSocket(Connection), AConnectTimeoutMS);
+    RunHandshake(SSL, False, ConnectionSocket(Connection), RemainingMS);
+    if GetTickCount64 > DeadlineMS then
+      raise ERtmpTransportError.Create('TLS handshake exceeded connect timeout');
     if AOptions.VerifyPeer AND (GSSLGetVerifyResult(SSL) <> X509_V_OK) then
       raise ERtmpTransportError.CreateFmt(
         'TLS peer certificate verification failed with code %d',
