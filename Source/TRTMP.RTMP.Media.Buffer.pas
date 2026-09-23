@@ -53,13 +53,19 @@ type
     procedure Clear;
     function CurrentBytes: UInt64;
     function GetBootstrapSequenceNo(AFallbackSequenceNo: UInt64): UInt64;
+    function GetCoherentBootstrapSequenceNo(AMaxAgeMS: UInt64 = 0): UInt64;
     function GetCodecHeaders: TRtmpPacketArray;
     function GetCodecHeadersSnapshot: TRtmpPacketArray;
+    function GetCodecHeadersSnapshotBounded(AMaxPackets: Integer;
+      AMaxBytes: UInt64; out ATruncated: Boolean): TRtmpPacketArray;
     function GetLatestKeyframe: TRtmpPacket;
     function HasAudioTrackConfig(ATrackID: Integer): Boolean;
     function HasVideoTrackConfig(ATrackID: Integer): Boolean;
     function GetSinceSequence(ASequenceNo: UInt64): TRtmpPacketArray;
     function GetSinceSequenceSnapshot(ASequenceNo: UInt64): TRtmpPacketArray;
+    function GetSinceSequenceSnapshotBounded(ASequenceNo: UInt64;
+      AMaxPackets: Integer; AMaxBytes, AMaxAgeMS: UInt64;
+      out AFirstAvailable, ANextSequenceNo: UInt64): TRtmpPacketArray;
     function GetStats: TRtmpBufferStats;
     function GetSnapshot: TRtmpPacketArray;
     function PeekLatest: TRtmpPacket;
@@ -76,6 +82,7 @@ type
 implementation
 
 uses
+  TRTMP.Core.Compat,
   TRTMP.RTMP.Protocol.FLV;
 
 function ClonePacketArray(const APackets: TRtmpPacketArray): TRtmpPacketArray;
@@ -89,6 +96,20 @@ begin
       Result[I]:=APackets[I].CloneShallow
     else
       Result[I]:=nil;
+end;
+
+function AppendBoundedClone(var APackets: TRtmpPacketArray;
+  APacket: TRtmpPacket; AMaxPackets: Integer; AMaxBytes: UInt64;
+  var ACurrentBytes: UInt64): Boolean;
+begin
+  Result:=False;
+  if (APacket = nil) OR (Length(APackets) >= AMaxPackets) OR
+    (UInt64(APacket.PayloadSize) > AMaxBytes - ACurrentBytes) then
+    Exit;
+  SetLength(APackets, Length(APackets) + 1);
+  APackets[High(APackets)]:=APacket.CloneShallow;
+  Inc(ACurrentBytes, UInt64(APacket.PayloadSize));
+  Result:=True;
 end;
 
 constructor TRtmpCircularBuffer.Create(AMaxPackets: Integer; AMaxBytes: UInt64;
@@ -157,6 +178,37 @@ begin
   FLock.Acquire;
   try
     Result:=GetBootstrapSequenceNoLocked(AFallbackSequenceNo);
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TRtmpCircularBuffer.GetCoherentBootstrapSequenceNo(
+  AMaxAgeMS: UInt64): UInt64;
+var
+  I: Integer;
+  NowTick: UInt64;
+  Packet: TRtmpPacket;
+begin
+  Result:=0;
+  NowTick:=RtmpGetTickCount64;
+  FLock.Acquire;
+  try
+    if (FLatestKeyframe <> nil) AND
+      ((AMaxAgeMS = 0) OR
+       (NowTick - FLatestKeyframe.ArrivalTick <= AMaxAgeMS)) AND
+      (HasPacketWithSequenceNoLocked(FLatestKeyframe.SequenceNo) OR
+       HasPacketWithSequenceNoLocked(FLatestKeyframe.SequenceNo + 1)) then
+      Exit(FLatestKeyframe.SequenceNo);
+    for I:=FItems.Count - 1 downto 0 do
+    begin
+      Packet:=TRtmpPacket(FItems[I]);
+      if Packet.HasFlag(pfIsKeyframe) AND
+        (NOT Packet.HasFlag(pfIsCodecConfig)) AND
+        ((AMaxAgeMS = 0) OR
+         (NowTick - Packet.ArrivalTick <= AMaxAgeMS)) then
+        Exit(Packet.SequenceNo);
+    end;
   finally
     FLock.Release;
   end;
@@ -274,6 +326,78 @@ begin
       end;
     end;
     SortPacketsBySequence(Result);
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TRtmpCircularBuffer.GetCodecHeadersSnapshotBounded(
+  AMaxPackets: Integer; AMaxBytes: UInt64;
+  out ATruncated: Boolean): TRtmpPacketArray;
+var
+  Bytes: UInt64;
+  Candidates: array[0..512] of TRtmpPacket;
+  Count: Integer;
+  I: Integer;
+  J: Integer;
+  Packet: TRtmpPacket;
+  Seen: Boolean;
+  Temp: TRtmpPacket;
+begin
+  if (AMaxPackets < 1) OR (AMaxBytes < 1) then
+    raise EArgumentOutOfRangeException.Create('Invalid header snapshot limits');
+  Result:=nil;
+  ATruncated:=False;
+  Bytes:=0;
+  Count:=0;
+  FLock.Acquire;
+  try
+    if FLatestMetadata <> nil then
+    begin
+      Candidates[Count]:=FLatestMetadata;
+      Inc(Count);
+    end;
+    for I:=0 to 511 do
+    begin
+      if I < 256 then
+        Packet:=FLatestAudioConfigs[I]
+      else
+        Packet:=FLatestVideoConfigs[I - 256];
+      if Packet = nil then
+        Continue;
+      Seen:=False;
+      for J:=0 to Count - 1 do
+        if (Candidates[J].SequenceNo = Packet.SequenceNo) AND
+          (Candidates[J].MessageType = Packet.MessageType) then
+        begin
+          Seen:=True;
+          Break;
+        end;
+      if NOT Seen then
+      begin
+        Candidates[Count]:=Packet;
+        Inc(Count);
+      end;
+    end;
+    for I:=1 to Count - 1 do
+    begin
+      J:=I;
+      while (J > 0) AND
+        (Candidates[J - 1].SequenceNo > Candidates[J].SequenceNo) do
+      begin
+        Temp:=Candidates[J - 1];
+        Candidates[J - 1]:=Candidates[J];
+        Candidates[J]:=Temp;
+        Dec(J);
+      end;
+    end;
+    for I:=0 to Count - 1 do
+      if NOT AppendBoundedClone(Result, Candidates[I], AMaxPackets,
+        AMaxBytes, Bytes) then
+      begin
+        ATruncated:=True;
+        Break;
+      end;
   finally
     FLock.Release;
   end;
@@ -536,6 +660,65 @@ begin
         Result[CountFound]:=TRtmpPacket(FItems[I]).CloneShallow;
         Inc(CountFound);
       end;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TRtmpCircularBuffer.GetSinceSequenceSnapshotBounded(
+  ASequenceNo: UInt64; AMaxPackets: Integer;
+  AMaxBytes, AMaxAgeMS: UInt64;
+  out AFirstAvailable, ANextSequenceNo: UInt64): TRtmpPacketArray;
+var
+  Bytes: UInt64;
+  I: Integer;
+  NowTick: UInt64;
+  Packet: TRtmpPacket;
+begin
+  if (AMaxPackets < 1) OR (AMaxBytes < 1) then
+    raise EArgumentOutOfRangeException.Create('Invalid reader snapshot limits');
+  Result:=nil;
+  AFirstAvailable:=0;
+  ANextSequenceNo:=ASequenceNo;
+  Bytes:=0;
+  NowTick:=RtmpGetTickCount64;
+  FLock.Acquire;
+  try
+    if (FLatestKeyframe <> nil) AND
+      (FLatestKeyframe.SequenceNo >= ASequenceNo) AND
+      ((AMaxAgeMS = 0) OR
+       (NowTick - FLatestKeyframe.ArrivalTick <= AMaxAgeMS)) AND
+      (NOT HasPacketWithSequenceNoLocked(FLatestKeyframe.SequenceNo)) AND
+      HasPacketWithSequenceNoLocked(FLatestKeyframe.SequenceNo + 1) then
+    begin
+      Packet:=FLatestKeyframe;
+      AFirstAvailable:=Packet.SequenceNo;
+      if NOT AppendBoundedClone(Result, Packet, AMaxPackets,
+        AMaxBytes, Bytes) then
+      begin
+        ANextSequenceNo:=Packet.SequenceNo + 1;
+        Exit;
+      end;
+      ANextSequenceNo:=Packet.SequenceNo + 1;
+    end;
+    for I:=0 to FItems.Count - 1 do
+    begin
+      Packet:=TRtmpPacket(FItems[I]);
+      if (Packet.SequenceNo < ASequenceNo) OR
+        ((AMaxAgeMS > 0) AND
+         (NowTick - Packet.ArrivalTick > AMaxAgeMS)) then
+        Continue;
+      if AFirstAvailable = 0 then
+        AFirstAvailable:=Packet.SequenceNo;
+      if NOT AppendBoundedClone(Result, Packet, AMaxPackets,
+        AMaxBytes, Bytes) then
+      begin
+        if Length(Result) = 0 then
+          ANextSequenceNo:=Packet.SequenceNo + 1;
+        Break;
+      end;
+      ANextSequenceNo:=Packet.SequenceNo + 1;
+    end;
   finally
     FLock.Release;
   end;

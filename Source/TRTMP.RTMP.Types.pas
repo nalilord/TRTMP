@@ -134,6 +134,9 @@ type
     ReconnectDelayMS: Integer;
     MaxReconnectDelayMS: Integer;
     ReconnectBoundaryTimeoutMS: Integer;
+    ReaderBatchMaxPackets: Integer;
+    ReaderBatchMaxBytes: UInt64;
+    ReaderMaxLagMS: UInt32;
     OutChunkSize: Integer;
     TimestampMode: TRtmpTimestampMode;
     class function CreateDefault: TRtmpClientConfig; static;

@@ -49,6 +49,7 @@ type
     procedure Log(ALevel: TRtmpLogLevel; const ACategory, AMessage: string);
     procedure NoteReconnect;
     procedure NoteReconnectRequest;
+    procedure NoteDroppedPackets(ACount: UInt64);
     procedure NoteSentPacket(const APacket: TRtmpPacket);
     procedure RecalculateBitrate;
     procedure Initialize(const AConfig: TRtmpClientConfig);
@@ -130,6 +131,7 @@ type
     FMessageStreamID: UInt32;
     FNextAcknowledgementAt: UInt64;
     FNextSequenceNo: UInt64;
+    FBootstrapPending: Boolean;
     FReconnectRequestPending: Boolean;
     FReconnectRequestTick: UInt64;
     FReconnectTargetURL: string;
@@ -541,6 +543,7 @@ begin
   FMessageStreamID:=1;
   FNextAcknowledgementAt:=0;
   FNextSequenceNo:=0;
+  FBootstrapPending:=False;
   FReconnectRequestPending:=False;
   FReconnectRequestTick:=0;
   FReconnectTargetURL:='';
@@ -732,7 +735,10 @@ end;
 
 function TRtmpClientRelayThread.RunStreamingSession: Boolean;
 var
+  FirstAvailable: UInt64;
   I: Integer;
+  NeedRecovery: Boolean;
+  NextSequenceNo: UInt64;
   Packets: TRtmpPacketArray;
   Reassembler: TRtmpChunkReassembler;
   ResponseState: TRtmpClientResponseState;
@@ -796,23 +802,55 @@ begin
         Break;
       end;
 
+      if FBootstrapPending then
+      begin
+        if FClient.FBuffer.GetCoherentBootstrapSequenceNo(
+          FClient.Config.ReaderMaxLagMS) <> 0 then
+          SendInitialSnapshot;
+        RtmpSleepMS(10);
+        Continue;
+      end;
+
       if FClient.FBuffer <> nil then
       begin
-        Packets:=FClient.FBuffer.GetSinceSequenceSnapshot(FNextSequenceNo);
+        FirstAvailable:=0;
+        NextSequenceNo:=FNextSequenceNo;
+        NeedRecovery:=False;
+        if FClient.Config.ReaderBatchMaxPackets > 0 then
+          Packets:=FClient.FBuffer.GetSinceSequenceSnapshotBounded(
+            FNextSequenceNo, FClient.Config.ReaderBatchMaxPackets,
+            FClient.Config.ReaderBatchMaxBytes,
+            FClient.Config.ReaderMaxLagMS, FirstAvailable, NextSequenceNo)
+        else
+          Packets:=FClient.FBuffer.GetSinceSequenceSnapshot(FNextSequenceNo);
         try
-          for I:=0 to High(Packets) do
+          if (FClient.Config.ReaderBatchMaxPackets > 0) AND
+            (FNextSequenceNo > 0) AND (FirstAvailable > FNextSequenceNo) then
           begin
-            if ShouldReconnectBeforePacket(Packets[I]) then
-            begin
-              ApplyReconnectRequest(Target);
-              Break;
-            end;
-            SendPacketNow(Packets[I]);
-            FNextSequenceNo:=Packets[I].SequenceNo + 1;
+            FClient.NoteDroppedPackets(FirstAvailable - FNextSequenceNo);
+            NeedRecovery:=True;
+          end else if (Length(Packets) = 0) AND
+            (NextSequenceNo > FNextSequenceNo) then
+          begin
+            FClient.NoteDroppedPackets(NextSequenceNo - FNextSequenceNo);
+            FNextSequenceNo:=NextSequenceNo;
           end;
+          if NOT NeedRecovery then
+            for I:=0 to High(Packets) do
+            begin
+              if ShouldReconnectBeforePacket(Packets[I]) then
+              begin
+                ApplyReconnectRequest(Target);
+                Break;
+              end;
+              SendPacketNow(Packets[I]);
+              FNextSequenceNo:=Packets[I].SequenceNo + 1;
+            end;
         finally
           FreePacketArray(Packets);
         end;
+        if NeedRecovery then
+          SendInitialSnapshot;
       end;
 
       if FFastReconnect then
@@ -1477,15 +1515,27 @@ end;
 
 procedure TRtmpClientRelayThread.SendInitialSnapshot;
 var
+  FirstAvailable: UInt64;
   Headers: TRtmpPacketArray;
+  HeadersTruncated: Boolean;
   I: Integer;
+  NextSequenceNo: UInt64;
   Packets: TRtmpPacketArray;
 begin
   if (FClient = nil) OR (FClient.FBuffer = nil) then
     Exit;
+  FBootstrapPending:=False;
 
-  Headers:=FClient.FBuffer.GetCodecHeadersSnapshot;
+  HeadersTruncated:=False;
+  if FClient.Config.ReaderBatchMaxPackets > 0 then
+    Headers:=FClient.FBuffer.GetCodecHeadersSnapshotBounded(
+      FClient.Config.ReaderBatchMaxPackets,
+      FClient.Config.ReaderBatchMaxBytes, HeadersTruncated)
+  else
+    Headers:=FClient.FBuffer.GetCodecHeadersSnapshot;
   try
+    if HeadersTruncated then
+      raise Exception.Create('Codec header snapshot exceeds reader limits');
     for I:=0 to High(Headers) do
     begin
       SendPacketNow(Headers[I]);
@@ -1496,8 +1546,28 @@ begin
     FreePacketArray(Headers);
   end;
 
-  FNextSequenceNo:=FClient.FBuffer.GetBootstrapSequenceNo(FNextSequenceNo);
-  Packets:=FClient.FBuffer.GetSinceSequenceSnapshot(FNextSequenceNo);
+  if (FClient.Config.ReaderBatchMaxPackets > 0) AND
+    FClient.FBuffer.GetStats.HasVideoConfig then
+  begin
+    FNextSequenceNo:=FClient.FBuffer.GetCoherentBootstrapSequenceNo(
+      FClient.Config.ReaderMaxLagMS);
+    if FNextSequenceNo = 0 then
+    begin
+      FBootstrapPending:=True;
+      Exit;
+    end;
+    FBootstrapPending:=False;
+  end else
+    FNextSequenceNo:=FClient.FBuffer.GetBootstrapSequenceNo(FNextSequenceNo);
+  FirstAvailable:=0;
+  NextSequenceNo:=FNextSequenceNo;
+  if FClient.Config.ReaderBatchMaxPackets > 0 then
+    Packets:=FClient.FBuffer.GetSinceSequenceSnapshotBounded(
+      FNextSequenceNo, FClient.Config.ReaderBatchMaxPackets,
+      FClient.Config.ReaderBatchMaxBytes,
+      FClient.Config.ReaderMaxLagMS, FirstAvailable, NextSequenceNo)
+  else
+    Packets:=FClient.FBuffer.GetSinceSequenceSnapshot(FNextSequenceNo);
   try
     for I:=0 to High(Packets) do
     begin
@@ -1508,6 +1578,12 @@ begin
     end;
   finally
     FreePacketArray(Packets);
+  end;
+  if (FClient.Config.ReaderBatchMaxPackets > 0) AND
+    (Length(Packets) = 0) AND (NextSequenceNo > FNextSequenceNo) then
+  begin
+    FClient.NoteDroppedPackets(NextSequenceNo - FNextSequenceNo);
+    FNextSequenceNo:=NextSequenceNo;
   end;
 end;
 
@@ -1812,6 +1888,18 @@ begin
   end;
 end;
 
+procedure TRtmpClient.NoteDroppedPackets(ACount: UInt64);
+begin
+  if ACount = 0 then
+    Exit;
+  FLock.Acquire;
+  try
+    Inc(FStats.DroppedPackets, ACount);
+  finally
+    FLock.Release;
+  end;
+end;
+
 procedure TRtmpClient.NoteSentPacket(const APacket: TRtmpPacket);
 begin
   if APacket = nil then
@@ -1906,6 +1994,9 @@ begin
     raise ERangeError.CreateFmt(
       'Reconnect boundary timeout %d ms must not be negative',
       [FConfig.ReconnectBoundaryTimeoutMS]);
+  if (FConfig.ReaderBatchMaxPackets < 0) OR
+    ((FConfig.ReaderBatchMaxPackets = 0) <> (FConfig.ReaderBatchMaxBytes = 0)) then
+    raise ERangeError.Create('Reader batch limits must both be enabled or disabled');
 
   FLock.Acquire;
   try
