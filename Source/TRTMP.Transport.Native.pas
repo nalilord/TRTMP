@@ -19,10 +19,14 @@ type
     property NativeHandle: NativeUInt read GetNativeHandle;
   end;
 
-  TRtmpNativeTransportFactory = class(TInterfacedObject, IRtmpTransportFactory)
+  TRtmpNativeTransportFactory = class(TInterfacedObject,
+    IRtmpTransportFactory, IRtmpCancelableTransportFactory)
   public
     function CreateClientConnection(const ARemoteEndpoint: TRtmpSocketEndpoint;
       AConnectTimeoutMS: Integer): IRtmpConnection;
+    function CreateClientConnectionCancelable(
+      const ARemoteEndpoint: TRtmpSocketEndpoint; AConnectTimeoutMS: Integer;
+      const ACancellation: IRtmpConnectCancellation): IRtmpConnection;
     function CreateListener(const ABindEndpoint: TRtmpSocketEndpoint;
       ABacklog: Integer): IRtmpListener;
     function Description: string;
@@ -401,13 +405,16 @@ begin
 end;
 
 function ConnectSocketWithTimeout(ASocket: TRtmpSocketHandle;
-  const ARemoteEndpoint: TRtmpSocketEndpoint; ATimeoutMS: Integer): Boolean;
+  const ARemoteEndpoint: TRtmpSocketEndpoint; ATimeoutMS: Integer;
+  const ACancellation: IRtmpConnectCancellation): Boolean;
 var
   SockAddr: TRtmpSockAddrIn;
   {$IFDEF MSWINDOWS}
   SockAddrAny: TSockAddr absolute SockAddr;
   {$ENDIF}
   ErrorCode: Integer;
+  DeadlineMS: UInt64;
+  RemainingMS: Integer;
 begin
   if NOT EndpointToSockAddr(ARemoteEndpoint, SockAddr) then
     raise ERtmpTransportError.CreateFmt(
@@ -429,8 +436,23 @@ begin
     if NOT WouldBlockError(ErrorCode) then
       RaiseSocketError('connect', ErrorCode);
 
-    if NOT WaitForSocket(ASocket, False, True, ATimeoutMS) then
-      Exit(False);
+    if ACancellation = nil then
+    begin
+      if NOT WaitForSocket(ASocket, False, True, ATimeoutMS) then
+        Exit(False);
+    end else
+    begin
+      DeadlineMS:=GetTickCount64 + UInt64(ATimeoutMS);
+      repeat
+        if ACancellation.IsCancelled then
+          raise ERtmpTransportError.Create('Outbound TCP connect was cancelled');
+        if GetTickCount64 >= DeadlineMS then
+          Exit(False);
+        RemainingMS:=Integer(DeadlineMS - GetTickCount64);
+        if RemainingMS > 50 then
+          RemainingMS:=50;
+      until WaitForSocket(ASocket, False, True, RemainingMS);
+    end;
 
     ErrorCode:=GetSocketOptionError(ASocket);
     if ErrorCode <> 0 then
@@ -601,14 +623,29 @@ end;
 
 function TRtmpNativeTransportFactory.CreateClientConnection(
   const ARemoteEndpoint: TRtmpSocketEndpoint; AConnectTimeoutMS: Integer): IRtmpConnection;
+begin
+  Result:=CreateClientConnectionCancelable(ARemoteEndpoint,
+    AConnectTimeoutMS, nil);
+end;
+
+function TRtmpNativeTransportFactory.CreateClientConnectionCancelable(
+  const ARemoteEndpoint: TRtmpSocketEndpoint; AConnectTimeoutMS: Integer;
+  const ACancellation: IRtmpConnectCancellation): IRtmpConnection;
 var
   SocketHandle: TRtmpSocketHandle;
 begin
+  if AConnectTimeoutMS < 1 then
+    raise ERtmpTransportError.Create('TCP connect timeout must be positive');
   SocketHandle:=CreateNativeSocket;
   try
-    if NOT ConnectSocketWithTimeout(SocketHandle, ARemoteEndpoint, AConnectTimeoutMS) then
+    if (ACancellation <> nil) AND ACancellation.IsCancelled then
+      raise ERtmpTransportError.Create('Outbound TCP connect was cancelled');
+    if NOT ConnectSocketWithTimeout(SocketHandle, ARemoteEndpoint,
+      AConnectTimeoutMS, ACancellation) then
       raise ERtmpTransportError.CreateFmt('Connect timeout to %s:%d',
         [ARemoteEndpoint.Address, ARemoteEndpoint.Port]);
+    if (ACancellation <> nil) AND ACancellation.IsCancelled then
+      raise ERtmpTransportError.Create('Outbound TCP connect was cancelled');
 
     Result:=TRtmpNativeConnection.Create(SocketHandle,
       TRtmpSocketEndpoint.Create('0.0.0.0', 0), ARemoteEndpoint);

@@ -53,6 +53,18 @@ type
     function Description: string;
   end;
 
+  IRtmpConnectCancellation = interface(IInterface)
+    ['{9A62EA29-A8F4-4BCE-A884-E978DF3C6432}']
+    function IsCancelled: Boolean;
+  end;
+
+  IRtmpCancelableTransportFactory = interface(IInterface)
+    ['{05603964-5208-4C6C-A6F8-2B3D94E57270}']
+    function CreateClientConnectionCancelable(
+      const ARemoteEndpoint: TRtmpSocketEndpoint; AConnectTimeoutMS: Integer;
+      const ACancellation: IRtmpConnectCancellation): IRtmpConnection;
+  end;
+
   TRtmpNullTransportFactory = class(TInterfacedObject, IRtmpTransportFactory)
   public
     function CreateClientConnection(const ARemoteEndpoint: TRtmpSocketEndpoint;

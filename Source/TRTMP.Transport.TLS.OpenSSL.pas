@@ -15,19 +15,27 @@ uses
 
 type
   TRtmpOpenSSLTransportFactory = class(TInterfacedObject,
-    IRtmpTransportFactory, IRtmpTlsTransportFactory)
+    IRtmpTransportFactory, IRtmpTlsTransportFactory,
+    IRtmpCancelableTransportFactory, IRtmpCancelableTlsTransportFactory)
   private
     FNativeFactory: IRtmpTransportFactory;
   public
     constructor Create;
     function CreateClientConnection(const ARemoteEndpoint: TRtmpSocketEndpoint;
       AConnectTimeoutMS: Integer): IRtmpConnection;
+    function CreateClientConnectionCancelable(
+      const ARemoteEndpoint: TRtmpSocketEndpoint; AConnectTimeoutMS: Integer;
+      const ACancellation: IRtmpConnectCancellation): IRtmpConnection;
     function CreateListener(const ABindEndpoint: TRtmpSocketEndpoint;
       ABacklog: Integer): IRtmpListener;
     function CreateTlsClientConnection(
       const ARemoteEndpoint: TRtmpSocketEndpoint;
       const AOptions: TRtmpTlsClientOptions;
       AConnectTimeoutMS: Integer): IRtmpConnection;
+    function CreateTlsClientConnectionCancelable(
+      const ARemoteEndpoint: TRtmpSocketEndpoint;
+      const AOptions: TRtmpTlsClientOptions; AConnectTimeoutMS: Integer;
+      const ACancellation: IRtmpConnectCancellation): IRtmpConnection;
     function CreateTlsListener(const ABindEndpoint: TRtmpSocketEndpoint;
       ABacklog: Integer; const AOptions: TRtmpTlsServerOptions): IRtmpListener;
     function Description: string;
@@ -48,8 +56,23 @@ function TRtmpOpenSSLTransportFactory.CreateClientConnection(
   const ARemoteEndpoint: TRtmpSocketEndpoint;
   AConnectTimeoutMS: Integer): IRtmpConnection;
 begin
-  Result:=FNativeFactory.CreateClientConnection(ARemoteEndpoint,
-    AConnectTimeoutMS);
+  Result:=CreateClientConnectionCancelable(ARemoteEndpoint,
+    AConnectTimeoutMS, nil);
+end;
+
+function TRtmpOpenSSLTransportFactory.CreateClientConnectionCancelable(
+  const ARemoteEndpoint: TRtmpSocketEndpoint; AConnectTimeoutMS: Integer;
+  const ACancellation: IRtmpConnectCancellation): IRtmpConnection;
+var
+  NativeFactory: IRtmpCancelableTransportFactory;
+begin
+  if Supports(FNativeFactory, IRtmpCancelableTransportFactory,
+    NativeFactory) then
+    Result:=NativeFactory.CreateClientConnectionCancelable(
+      ARemoteEndpoint, AConnectTimeoutMS, ACancellation)
+  else
+    Result:=FNativeFactory.CreateClientConnection(ARemoteEndpoint,
+      AConnectTimeoutMS);
 end;
 
 function TRtmpOpenSSLTransportFactory.CreateListener(
@@ -62,6 +85,15 @@ function TRtmpOpenSSLTransportFactory.CreateTlsClientConnection(
   const ARemoteEndpoint: TRtmpSocketEndpoint;
   const AOptions: TRtmpTlsClientOptions;
   AConnectTimeoutMS: Integer): IRtmpConnection;
+begin
+  Result:=CreateTlsClientConnectionCancelable(ARemoteEndpoint,
+    AOptions, AConnectTimeoutMS, nil);
+end;
+
+function TRtmpOpenSSLTransportFactory.CreateTlsClientConnectionCancelable(
+  const ARemoteEndpoint: TRtmpSocketEndpoint;
+  const AOptions: TRtmpTlsClientOptions; AConnectTimeoutMS: Integer;
+  const ACancellation: IRtmpConnectCancellation): IRtmpConnection;
 begin
   Result:=nil;
   raise ERtmpTransportError.Create(
@@ -615,6 +647,70 @@ begin
   RaiseOpenSSLError('TLS handshake');
 end;
 
+procedure RunCancelableClientHandshake(ASSL: PSSL; ASocket: Integer;
+  ADeadlineMS: UInt64; const ACancellation: IRtmpConnectCancellation);
+var
+  ErrorCode: Integer;
+  Flags: Integer;
+  HandshakeResult: Integer;
+  RemainingMS: Integer;
+  ReadSet: TFDSet;
+  ReadSetPtr: PFDSet;
+  TimeValue: TTimeVal;
+  WaitMS: Integer;
+  WriteSet: TFDSet;
+  WriteSetPtr: PFDSet;
+begin
+  Flags:=fpfcntl(ASocket, F_GETFL, 0);
+  if (Flags < 0) OR (fpfcntl(ASocket, F_SETFL,
+    Flags OR O_NONBLOCK) <> 0) then
+    raise ERtmpTransportError.Create('Cannot make TLS socket nonblocking');
+  try
+    repeat
+      if ACancellation.IsCancelled then
+        raise ERtmpTransportError.Create('Outbound TLS handshake was cancelled');
+      if GetTickCount64 >= ADeadlineMS then
+        raise ERtmpTransportError.Create('TLS handshake timed out');
+      HandshakeResult:=GSSLConnect(ASSL);
+      if HandshakeResult = 1 then
+        Exit;
+      ErrorCode:=GSSLGetError(ASSL, HandshakeResult);
+      if (ErrorCode <> SSL_ERROR_WANT_READ) AND
+         (ErrorCode <> SSL_ERROR_WANT_WRITE) then
+        RaiseOpenSSLError('TLS handshake');
+      repeat
+        if ACancellation.IsCancelled then
+          raise ERtmpTransportError.Create('Outbound TLS handshake was cancelled');
+        if GetTickCount64 >= ADeadlineMS then
+          raise ERtmpTransportError.Create('TLS handshake timed out');
+        RemainingMS:=Integer(ADeadlineMS - GetTickCount64);
+        WaitMS:=RemainingMS;
+        if WaitMS > 50 then
+          WaitMS:=50;
+        fpFD_ZERO(ReadSet);
+        fpFD_ZERO(WriteSet);
+        ReadSetPtr:=nil;
+        WriteSetPtr:=nil;
+        if ErrorCode = SSL_ERROR_WANT_READ then
+        begin
+          fpFD_SET(ASocket, ReadSet);
+          ReadSetPtr:=@ReadSet;
+        end else
+        begin
+          fpFD_SET(ASocket, WriteSet);
+          WriteSetPtr:=@WriteSet;
+        end;
+        TimeValue.tv_sec:=WaitMS DIV 1000;
+        TimeValue.tv_usec:=(WaitMS MOD 1000) * 1000;
+      until fpselect(ASocket + 1, ReadSetPtr, WriteSetPtr,
+        nil, @TimeValue) > 0;
+    until False;
+  finally
+    if fpfcntl(ASocket, F_SETFL, Flags) <> 0 then
+      raise ERtmpTransportError.Create('Cannot restore TLS socket mode');
+  end;
+end;
+
 constructor TRtmpOpenSSLConnection.Create(const AConnection: IRtmpConnection;
   AContext: PSSL_CTX; ASSL: PSSL);
 begin
@@ -808,8 +904,23 @@ function TRtmpOpenSSLTransportFactory.CreateClientConnection(
   const ARemoteEndpoint: TRtmpSocketEndpoint;
   AConnectTimeoutMS: Integer): IRtmpConnection;
 begin
-  Result:=FNativeFactory.CreateClientConnection(ARemoteEndpoint,
-    AConnectTimeoutMS);
+  Result:=CreateClientConnectionCancelable(ARemoteEndpoint,
+    AConnectTimeoutMS, nil);
+end;
+
+function TRtmpOpenSSLTransportFactory.CreateClientConnectionCancelable(
+  const ARemoteEndpoint: TRtmpSocketEndpoint; AConnectTimeoutMS: Integer;
+  const ACancellation: IRtmpConnectCancellation): IRtmpConnection;
+var
+  NativeFactory: IRtmpCancelableTransportFactory;
+begin
+  if Supports(FNativeFactory, IRtmpCancelableTransportFactory,
+    NativeFactory) then
+    Result:=NativeFactory.CreateClientConnectionCancelable(
+      ARemoteEndpoint, AConnectTimeoutMS, ACancellation)
+  else
+    Result:=FNativeFactory.CreateClientConnection(ARemoteEndpoint,
+      AConnectTimeoutMS);
 end;
 
 function TRtmpOpenSSLTransportFactory.CreateListener(
@@ -822,6 +933,15 @@ function TRtmpOpenSSLTransportFactory.CreateTlsClientConnection(
   const ARemoteEndpoint: TRtmpSocketEndpoint;
   const AOptions: TRtmpTlsClientOptions;
   AConnectTimeoutMS: Integer): IRtmpConnection;
+begin
+  Result:=CreateTlsClientConnectionCancelable(ARemoteEndpoint,
+    AOptions, AConnectTimeoutMS, nil);
+end;
+
+function TRtmpOpenSSLTransportFactory.CreateTlsClientConnectionCancelable(
+  const ARemoteEndpoint: TRtmpSocketEndpoint;
+  const AOptions: TRtmpTlsClientOptions; AConnectTimeoutMS: Integer;
+  const ACancellation: IRtmpConnectCancellation): IRtmpConnection;
 var
   Connection: IRtmpConnection;
   Context: PSSL_CTX;
@@ -841,8 +961,10 @@ begin
     if GetTickCount64 >= DeadlineMS then
       raise ERtmpTransportError.Create('TLS connection timed out before TCP connect');
     RemainingMS:=Integer(DeadlineMS - GetTickCount64);
-    Connection:=FNativeFactory.CreateClientConnection(ARemoteEndpoint,
-      RemainingMS);
+    Connection:=CreateClientConnectionCancelable(ARemoteEndpoint,
+      RemainingMS, ACancellation);
+    if (ACancellation <> nil) AND ACancellation.IsCancelled then
+      raise ERtmpTransportError.Create('Outbound TLS connection was cancelled');
     if GetTickCount64 >= DeadlineMS then
       raise ERtmpTransportError.Create('TLS connection timed out before handshake');
     RemainingMS:=Integer(DeadlineMS - GetTickCount64);
@@ -852,7 +974,13 @@ begin
     if GSSLSetFD(SSL, ConnectionSocket(Connection)) <> 1 then
       RaiseOpenSSLError('attaching TLS client socket');
     ConfigureClientIdentity(SSL, AOptions);
-    RunHandshake(SSL, False, ConnectionSocket(Connection), RemainingMS);
+    if ACancellation = nil then
+      RunHandshake(SSL, False, ConnectionSocket(Connection), RemainingMS)
+    else
+      RunCancelableClientHandshake(SSL, ConnectionSocket(Connection),
+        DeadlineMS, ACancellation);
+    if (ACancellation <> nil) AND ACancellation.IsCancelled then
+      raise ERtmpTransportError.Create('Outbound TLS handshake was cancelled');
     if GetTickCount64 > DeadlineMS then
       raise ERtmpTransportError.Create('TLS handshake exceeded connect timeout');
     if AOptions.VerifyPeer AND (GSSLGetVerifyResult(SSL) <> X509_V_OK) then

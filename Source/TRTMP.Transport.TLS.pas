@@ -51,6 +51,14 @@ type
     function TlsDescription: string;
   end;
 
+  IRtmpCancelableTlsTransportFactory = interface(IInterface)
+    ['{983044DB-D8F0-4962-9F7C-21F617292D69}']
+    function CreateTlsClientConnectionCancelable(
+      const ARemoteEndpoint: TRtmpSocketEndpoint;
+      const AOptions: TRtmpTlsClientOptions; AConnectTimeoutMS: Integer;
+      const ACancellation: IRtmpConnectCancellation): IRtmpConnection;
+  end;
+
 function RtmpTlsVersionName(AVersion: TRtmpTlsVersion): string;
 
 implementation
