@@ -167,7 +167,8 @@ type
     function ReadOneOrMoreBytes(ATimeoutMS: Integer; out ABytes: TBytes): Boolean;
     procedure SendBuffer(ABuffer: Pointer; ACount: Integer);
     procedure SendBytes(const ABytes: TBytes);
-    procedure SendCommandMessage(AChunkStreamID, AMessageStreamID: UInt32;
+    // Consumes each distinct AMF value in AValues.
+    procedure SendOwnedCommandMessage(AChunkStreamID, AMessageStreamID: UInt32;
       const AValues: array of TObject);
     procedure SendInitialSnapshot;
     procedure SendPacketNow(const APacket: TRtmpPacket);
@@ -652,33 +653,29 @@ begin
   if FClient.Config.EnhancedCapabilities <> 0 then
     ConnectInfo.Add('capsEx',
       TRtmpAmf0Number.Create(FClient.Config.EnhancedCapabilities));
-  try
-    SendCommandMessage(3, 0, BuildCommandValueArray([
-      TRtmpAmf0String.Create('connect'),
-      TRtmpAmf0Number.Create(1),
-      ConnectInfo
-    ]));
-  finally
-    ConnectInfo.Free;
-  end;
+  SendOwnedCommandMessage(3, 0, BuildCommandValueArray([
+    TRtmpAmf0String.Create('connect'),
+    TRtmpAmf0Number.Create(1),
+    ConnectInfo
+  ]));
 
   ResponseState:=Default(TRtmpClientResponseState);
 
-  SendCommandMessage(3, 0, BuildCommandValueArray([
+  SendOwnedCommandMessage(3, 0, BuildCommandValueArray([
     TRtmpAmf0String.Create('releaseStream'),
     TRtmpAmf0Number.Create(2),
     TRtmpAmf0Null.Create,
     TRtmpAmf0String.Create(ATarget.StreamKey)
   ]));
 
-  SendCommandMessage(3, 0, BuildCommandValueArray([
+  SendOwnedCommandMessage(3, 0, BuildCommandValueArray([
     TRtmpAmf0String.Create('FCPublish'),
     TRtmpAmf0Number.Create(3),
     TRtmpAmf0Null.Create,
     TRtmpAmf0String.Create(ATarget.StreamKey)
   ]));
 
-  SendCommandMessage(3, 0, BuildCommandValueArray([
+  SendOwnedCommandMessage(3, 0, BuildCommandValueArray([
     TRtmpAmf0String.Create('createStream'),
     TRtmpAmf0Number.Create(4),
     TRtmpAmf0Null.Create
@@ -704,7 +701,7 @@ begin
   if FMessageStreamID = 0 then
     FMessageStreamID:=1;
 
-  SendCommandMessage(8, FMessageStreamID, BuildCommandValueArray([
+  SendOwnedCommandMessage(8, FMessageStreamID, BuildCommandValueArray([
     TRtmpAmf0String.Create('publish'),
     TRtmpAmf0Number.Create(0),
     TRtmpAmf0Null.Create,
@@ -1487,25 +1484,28 @@ begin
   end;
 end;
 
-procedure TRtmpClientRelayThread.SendCommandMessage(AChunkStreamID,
+procedure TRtmpClientRelayThread.SendOwnedCommandMessage(AChunkStreamID,
   AMessageStreamID: UInt32; const AValues: array of TObject);
 var
   I: Integer;
   Payload: TBytes;
   Values: TRtmpAmf0ValueList;
 begin
-  Values:=TRtmpAmf0ValueList.Create(True);
+  Values:=nil;
   try
+    Values:=TRtmpAmf0ValueList.Create(False);
     for I:=0 to High(AValues) do
     begin
       if AValues[I] IS TRtmpAmf0Value then
-        Values.AddValue(TRtmpAmf0Value(AValues[I]).Clone)
+        Values.AddValue(TRtmpAmf0Value(AValues[I]))
       else
-        raise Exception.Create('SendCommandMessage only accepts TRtmpAmf0Value objects');
+        raise Exception.Create('SendOwnedCommandMessage only accepts TRtmpAmf0Value objects');
     end;
     Payload:=TRtmpAmf0.EncodeValues(Values);
   finally
     Values.Free;
+    for I:=0 to High(AValues) do
+      AValues[I].Free;
   end;
 
   SendRtmpMessage(AChunkStreamID, AMessageStreamID,

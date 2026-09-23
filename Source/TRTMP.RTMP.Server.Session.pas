@@ -112,7 +112,8 @@ type
     function ReadExact(ACount: Integer; out ABytes: TBytes): Boolean;
     procedure SendBuffer(ABuffer: Pointer; ACount: Integer);
     procedure SendBytes(const ABytes: TBytes);
-    procedure SendCommandMessage(AChunkStreamID, AMessageStreamID: UInt32;
+    // Consumes each distinct AMF value in AValues.
+    procedure SendOwnedCommandMessage(AChunkStreamID, AMessageStreamID: UInt32;
       const AValues: array of TObject);
     procedure SendCommandError(ATransactionID: Double; const ACode,
       ADescription: string);
@@ -597,16 +598,12 @@ begin
     StatusInfo.Add('tcUrl', TRtmpAmf0String.Create(TcUrl));
   if Description <> '' then
     StatusInfo.Add('description', TRtmpAmf0String.Create(Description));
-  try
-    SendCommandMessage(3, 0, BuildCommandValueArray([
-      TRtmpAmf0String.Create('onStatus'),
-      TRtmpAmf0Number.Create(0),
-      TRtmpAmf0Null.Create,
-      StatusInfo
-    ]));
-  finally
-    StatusInfo.Free;
-  end;
+  SendOwnedCommandMessage(3, 0, BuildCommandValueArray([
+    TRtmpAmf0String.Create('onStatus'),
+    TRtmpAmf0Number.Create(0),
+    TRtmpAmf0Null.Create,
+    StatusInfo
+  ]));
   EmitLog(FActiveLogHandler, llInfo, 'session', Format(
     'Sent reconnect request tcUrl=%s description=%s', [TcUrl, Description]));
 end;
@@ -1446,29 +1443,32 @@ begin
   end;
 end;
 
-procedure TRtmpServerSession.SendCommandMessage(AChunkStreamID,
+procedure TRtmpServerSession.SendOwnedCommandMessage(AChunkStreamID,
   AMessageStreamID: UInt32; const AValues: array of TObject);
 var
   I: Integer;
   Payload: TBytes;
   Values: TRtmpAmf0ValueList;
 begin
-  if IsLogEnabled(llDebug) then
-    EmitLog(FActiveLogHandler, llDebug, 'tx-command',
-      Format('csid=%d msid=%d values=%d', [AChunkStreamID, AMessageStreamID,
-        Length(AValues)]));
-  Values:=TRtmpAmf0ValueList.Create(True);
+  Values:=nil;
   try
+    if IsLogEnabled(llDebug) then
+      EmitLog(FActiveLogHandler, llDebug, 'tx-command',
+        Format('csid=%d msid=%d values=%d', [AChunkStreamID, AMessageStreamID,
+          Length(AValues)]));
+    Values:=TRtmpAmf0ValueList.Create(False);
     for I:=0 to High(AValues) do
     begin
       if AValues[I] IS TRtmpAmf0Value then
-        Values.AddValue(TRtmpAmf0Value(AValues[I]).Clone)
+        Values.AddValue(TRtmpAmf0Value(AValues[I]))
       else
-        raise Exception.Create('SendCommandMessage only accepts TRtmpAmf0Value objects');
+        raise Exception.Create('SendOwnedCommandMessage only accepts TRtmpAmf0Value objects');
     end;
     Payload:=TRtmpAmf0.EncodeValues(Values);
   finally
     Values.Free;
+    for I:=0 to High(AValues) do
+      AValues[I].Free;
   end;
 
   SendRtmpMessage(AChunkStreamID, AMessageStreamID, RtmpMessageTypeID(mtCommandAMF0), 0, Payload);
@@ -1484,16 +1484,12 @@ begin
     'code', ACode,
     'description', ADescription
   ]);
-  try
-    SendCommandMessage(3, 0, BuildCommandValueArray([
-      TRtmpAmf0String.Create('_error'),
-      TRtmpAmf0Number.Create(ATransactionID),
-      TRtmpAmf0Null.Create,
-      StatusInfo
-    ]));
-  finally
-    StatusInfo.Free;
-  end;
+  SendOwnedCommandMessage(3, 0, BuildCommandValueArray([
+    TRtmpAmf0String.Create('_error'),
+    TRtmpAmf0Number.Create(ATransactionID),
+    TRtmpAmf0Null.Create,
+    StatusInfo
+  ]));
 end;
 
 procedure TRtmpServerSession.SendConnectSuccess(ATransactionID: Double);
@@ -1514,22 +1510,17 @@ begin
     'description', 'Connection succeeded.',
     'objectEncoding', 0
   ]);
-  try
-    SendCommandMessage(3, 0, BuildCommandValueArray([
-      TRtmpAmf0String.Create('_result'),
-      TRtmpAmf0Number.Create(ATransactionID),
-      ServerInfo,
-      StatusInfo
-    ]));
-  finally
-    ServerInfo.Free;
-    StatusInfo.Free;
-  end;
+  SendOwnedCommandMessage(3, 0, BuildCommandValueArray([
+    TRtmpAmf0String.Create('_result'),
+    TRtmpAmf0Number.Create(ATransactionID),
+    ServerInfo,
+    StatusInfo
+  ]));
 end;
 
 procedure TRtmpServerSession.SendCreateStreamResult(ATransactionID: Double);
 begin
-  SendCommandMessage(3, 0, BuildCommandValueArray([
+  SendOwnedCommandMessage(3, 0, BuildCommandValueArray([
     TRtmpAmf0String.Create('_result'),
     TRtmpAmf0Number.Create(ATransactionID),
     TRtmpAmf0Null.Create,
@@ -1554,16 +1545,12 @@ begin
     'code', ACode,
     'description', ADescription
   ]);
-  try
-    SendCommandMessage(5, StreamID, BuildCommandValueArray([
-      TRtmpAmf0String.Create('onStatus'),
-      TRtmpAmf0Number.Create(0),
-      TRtmpAmf0Null.Create,
-      StatusInfo
-    ]));
-  finally
-    StatusInfo.Free;
-  end;
+  SendOwnedCommandMessage(5, StreamID, BuildCommandValueArray([
+    TRtmpAmf0String.Create('onStatus'),
+    TRtmpAmf0Number.Create(0),
+    TRtmpAmf0Null.Create,
+    StatusInfo
+  ]));
 end;
 
 procedure TRtmpServerSession.SendProtocolDefaults;
@@ -1594,16 +1581,12 @@ begin
     'code', 'NetStream.Play.Reset',
     'description', 'Resetting and playing stream'
   ]);
-  try
-    SendCommandMessage(5, StreamID, BuildCommandValueArray([
-      TRtmpAmf0String.Create('onStatus'),
-      TRtmpAmf0Number.Create(0),
-      TRtmpAmf0Null.Create,
-      StatusInfo
-    ]));
-  finally
-    StatusInfo.Free;
-  end;
+  SendOwnedCommandMessage(5, StreamID, BuildCommandValueArray([
+    TRtmpAmf0String.Create('onStatus'),
+    TRtmpAmf0Number.Create(0),
+    TRtmpAmf0Null.Create,
+    StatusInfo
+  ]));
 end;
 
 procedure TRtmpServerSession.SendPlayStart;
@@ -1622,16 +1605,12 @@ begin
     'code', 'NetStream.Play.Start',
     'description', 'Started playing stream'
   ]);
-  try
-    SendCommandMessage(5, StreamID, BuildCommandValueArray([
-      TRtmpAmf0String.Create('onStatus'),
-      TRtmpAmf0Number.Create(0),
-      TRtmpAmf0Null.Create,
-      StatusInfo
-    ]));
-  finally
-    StatusInfo.Free;
-  end;
+  SendOwnedCommandMessage(5, StreamID, BuildCommandValueArray([
+    TRtmpAmf0String.Create('onStatus'),
+    TRtmpAmf0Number.Create(0),
+    TRtmpAmf0Null.Create,
+    StatusInfo
+  ]));
 end;
 
 procedure TRtmpServerSession.SendPlayPacket(APacket: TRtmpPacket);
@@ -1665,16 +1644,12 @@ begin
     'code', 'NetStream.Publish.Start',
     'description', 'Start publishing'
   ]);
-  try
-    SendCommandMessage(5, 1, BuildCommandValueArray([
-      TRtmpAmf0String.Create('onStatus'),
-      TRtmpAmf0Number.Create(0),
-      TRtmpAmf0Null.Create,
-      StatusInfo
-    ]));
-  finally
-    StatusInfo.Free;
-  end;
+  SendOwnedCommandMessage(5, 1, BuildCommandValueArray([
+    TRtmpAmf0String.Create('onStatus'),
+    TRtmpAmf0Number.Create(0),
+    TRtmpAmf0Null.Create,
+    StatusInfo
+  ]));
 end;
 
 procedure TRtmpServerSession.SendRtmpMessage(AChunkStreamID, AMessageStreamID: UInt32;
