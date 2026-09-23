@@ -206,6 +206,7 @@ begin
       Session.MinLogLevel:=llDebug;
       Session.MaxInChunkSize:=Config.MaxChunkSize;
       Session.MaxInMessageSize:=Config.MaxMessageSize;
+      Session.MaxInReassemblyBytes:=Config.MaxReassemblyBytes;
       Session.MaxInChunkStreams:=Config.MaxChunkStreams;
       Session.ReadTimeoutMS:=Config.ReadTimeoutMS;
       Session.WriteTimeoutMS:=Config.WriteTimeoutMS;

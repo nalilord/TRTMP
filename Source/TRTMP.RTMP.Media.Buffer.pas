@@ -31,6 +31,8 @@ type
     FMaxBytes: UInt64;
     FMaxDurationMS: UInt32;
     FCurrentBytes: UInt64;
+    FMaxRetainedBytes: UInt64;
+    FRetainedBudgetBytes: UInt64;
     function GetCount: Integer;
     function GetBootstrapSequenceNoLocked(AFallbackSequenceNo: UInt64): UInt64;
     function GetRetainedBytesLocked: UInt64;
@@ -43,6 +45,7 @@ type
     procedure SetMaxBytes(AValue: UInt64);
     procedure SetMaxDurationMS(AValue: UInt32);
     procedure SetMaxPackets(AValue: Integer);
+    procedure SetMaxRetainedBytes(AValue: UInt64);
     function SnapshotStatsLocked: TRtmpBufferStats;
     procedure TrimToBudget;
   public
@@ -77,6 +80,7 @@ type
     property MaxPackets: Integer read FMaxPackets write SetMaxPackets;
     property MaxBytes: UInt64 read FMaxBytes write SetMaxBytes;
     property MaxDurationMS: UInt32 read FMaxDurationMS write SetMaxDurationMS;
+    property MaxRetainedBytes: UInt64 read FMaxRetainedBytes write SetMaxRetainedBytes;
   end;
 
 implementation
@@ -122,6 +126,8 @@ begin
   FMaxBytes:=AMaxBytes;
   FMaxDurationMS:=AMaxDurationMS;
   FCurrentBytes:=0;
+  FMaxRetainedBytes:=0;
+  FRetainedBudgetBytes:=0;
   FStats:=Default(TRtmpBufferStats);
   FStats.MaxPackets:=AMaxPackets;
   FStats.MaxBytes:=AMaxBytes;
@@ -146,6 +152,7 @@ begin
   try
     FItems.Clear;
     FCurrentBytes:=0;
+    FRetainedBudgetBytes:=0;
     FStats:=Default(TRtmpBufferStats);
     FStats.MaxPackets:=FMaxPackets;
     FStats.MaxBytes:=FMaxBytes;
@@ -815,10 +822,37 @@ end;
 
 procedure TRtmpCircularBuffer.ReplacePinnedPacket(var ATarget: TRtmpPacket;
   ASource: TRtmpPacket);
+var
+  PayloadBytes: UInt64;
 begin
+  if ATarget <> nil then
+    Dec(FRetainedBudgetBytes, UInt64(ATarget.PayloadSize));
   FreeAndNil(ATarget);
   if ASource <> nil then
+  begin
+    PayloadBytes:=UInt64(ASource.PayloadSize);
+    if (FMaxRetainedBytes > 0) AND
+      (PayloadBytes > FMaxRetainedBytes - FRetainedBudgetBytes) then
+    begin
+      Inc(FStats.FPinnedBudgetDrops);
+      Exit;
+    end;
     ATarget:=ASource.CloneShallow;
+    Inc(FRetainedBudgetBytes, PayloadBytes);
+  end;
+end;
+
+procedure TRtmpCircularBuffer.SetMaxRetainedBytes(AValue: UInt64);
+begin
+  FLock.Acquire;
+  try
+    if (AValue > 0) AND (AValue < FRetainedBudgetBytes) then
+      raise EArgumentOutOfRangeException.Create(
+        'Retained byte cap is below the current pinned payload');
+    FMaxRetainedBytes:=AValue;
+  finally
+    FLock.Release;
+  end;
 end;
 
 procedure TRtmpCircularBuffer.SetMaxBytes(AValue: UInt64);
@@ -887,6 +921,7 @@ begin
   Result.HasKeyframe:=FLatestKeyframe <> nil;
   Result.RetainedPackets:=GetRetainedPacketCountLocked;
   Result.RetainedBytes:=GetRetainedBytesLocked;
+  Result.FPinnedBudgetBytes:=FRetainedBudgetBytes;
 end;
 
 procedure TRtmpCircularBuffer.TrimToBudget;

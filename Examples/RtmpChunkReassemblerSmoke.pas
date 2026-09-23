@@ -344,6 +344,62 @@ begin
   end;
 end;
 
+procedure TestAggregateActivePayloadBudget;
+var
+  Header: TRtmpChunkMessageHeader;
+  MessageOut: TRtmpChunkMessage;
+  Reassembler: TRtmpChunkReassembler;
+begin
+  Reassembler:=TRtmpChunkReassembler.Create(4);
+  try
+    Reassembler.MaxMessageSize:=6;
+    Reassembler.MaxBufferedBytes:=24;
+    Header:=Default(TRtmpChunkMessageHeader);
+    Header.HeaderFormat:=hfType0;
+    Header.MessageLength:=6;
+    Header.MessageTypeID:=RtmpMessageTypeID(mtVideo);
+    Header.MessageStreamID:=1;
+    Reassembler.AppendBytes(BuildChunk(hfType0, 6, Header, Bytes([1, 2, 3, 4])));
+    AssertTrue('first active message should remain incomplete',
+      NOT Reassembler.TryReadMessage(MessageOut));
+    AssertTrue('first message should reserve six bytes', Reassembler.ActiveBytes = 6);
+
+    Header.MessageLength:=4;
+    Reassembler.AppendBytes(BuildChunk(hfType0, 7, Header, Bytes([5, 6, 7, 8])));
+    try
+      Reassembler.TryReadMessage(MessageOut);
+      raise Exception.Create('interleaved messages exceeded active payload budget');
+    except
+      on E: ERtmpProtocolError do
+        AssertTrue('wrong active payload budget error',
+          Pos('reassembly budget', E.Message) > 0);
+    end;
+    AssertTrue('rejected message must not reserve bytes', Reassembler.ActiveBytes = 6);
+    Reassembler.AbortChunkStream(6);
+    AssertTrue('abort should release active payload budget', Reassembler.ActiveBytes = 0);
+    Reassembler.Clear;
+    Reassembler.AppendBytes(BuildChunk(hfType0, 7, Header, Bytes([5, 6, 7, 8])));
+    AssertTrue('budget should be reusable after abort',
+      Reassembler.TryReadMessage(MessageOut));
+    AssertTrue('completed message should release active payload budget',
+      Reassembler.ActiveBytes = 0);
+    Reassembler.Clear;
+    try
+      Reassembler.AppendBytes(Bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+      raise Exception.Create('oversized pending input exceeded byte budget');
+    except
+      on E: ERtmpProtocolError do
+        AssertTrue('wrong pending input budget error',
+          Pos('buffered byte budget', E.Message) > 0);
+    end;
+    AssertTrue('rejected pending input must not be retained',
+      Reassembler.PendingBytes = 0);
+  finally
+    Reassembler.Free;
+  end;
+end;
+
 begin
   TestType1WithoutPreviousHeader;
   TestType3WithoutPreviousHeader;
@@ -352,5 +408,6 @@ begin
   TestBufferedContinuationDrainsSingleCall;
   TestExtendedTimestampAcrossContinuation;
   TestAbortDiscardsPartialMessage;
+  TestAggregateActivePayloadBudget;
   WriteLn('Chunk reassembler smoke passed.');
 end.

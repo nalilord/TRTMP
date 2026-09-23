@@ -112,5 +112,29 @@ begin
   finally
     Buffer.Free;
   end;
+  Buffer:=TRtmpCircularBuffer.Create(4, 8);
+  try
+    Buffer.MaxRetainedBytes:=4;
+    PushPacket(Buffer, 1, 3, [pfIsMetadata]);
+    PushPacket(Buffer, 2, 3, [pfIsVideo, pfIsKeyframe]);
+    Check((Buffer.GetStats.FPinnedBudgetBytes = 3) AND
+      (Buffer.GetStats.FPinnedBudgetDrops = 1) AND
+      (Buffer.GetLatestKeyframe = nil),
+      'pinned payload cap did not reject a new keyframe');
+    PushPacket(Buffer, 3, 2, [pfIsMetadata]);
+    PushPacket(Buffer, 4, 2, [pfIsVideo, pfIsKeyframe]);
+    Check((Buffer.GetStats.FPinnedBudgetBytes = 4) AND
+      (Buffer.GetLatestKeyframe <> nil),
+      'replacing a pin did not release its byte reservation');
+    PushPacket(Buffer, 5, 5, [pfIsVideo, pfIsKeyframe]);
+    Check((Buffer.GetStats.FPinnedBudgetBytes = 2) AND
+      (Buffer.GetLatestKeyframe = nil),
+      'oversized new pin left a stale keyframe');
+    Buffer.Clear;
+    Check(Buffer.GetStats.FPinnedBudgetBytes = 0,
+      'clear did not release pinned byte reservations');
+  finally
+    Buffer.Free;
+  end;
   WriteLn('RtmpBufferBoundedReaderSmoke: PASS');
 end.

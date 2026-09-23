@@ -72,6 +72,7 @@ type
     FMinLogLevel: TRtmpLogLevel;
     FMaxInChunkSize: Integer;
     FMaxInMessageSize: Integer;
+    FMaxInReassemblyBytes: UInt64;
     FMaxInChunkStreams: Integer;
     FProtocolDefaultsSent: Boolean;
     FReconnectRequestDescription: string;
@@ -136,6 +137,7 @@ type
     procedure SendWindowAckSize(AWindowSize: UInt32);
     procedure SetMaxInChunkStreams(AValue: Integer);
     procedure SetMaxInMessageSize(AValue: Integer);
+    procedure SetMaxInReassemblyBytes(AValue: UInt64);
   public
     constructor Create(const AConnection: IRtmpConnection); overload;
     constructor Create(const ARemoteAddress: string; ARemotePort: Word); overload;
@@ -177,6 +179,7 @@ type
     property MaxInChunkSize: Integer read FMaxInChunkSize write FMaxInChunkSize;
     property MaxInChunkStreams: Integer read FMaxInChunkStreams write SetMaxInChunkStreams;
     property MaxInMessageSize: Integer read FMaxInMessageSize write SetMaxInMessageSize;
+    property MaxInReassemblyBytes: UInt64 read FMaxInReassemblyBytes write SetMaxInReassemblyBytes;
     property MinLogLevel: TRtmpLogLevel read FMinLogLevel write FMinLogLevel;
     property ReadTimeoutMS: Integer read FReadTimeoutMS write FReadTimeoutMS;
     property OnStopRequested: TRtmpSessionStopQuery read FOnStopRequested write FOnStopRequested;
@@ -431,6 +434,7 @@ begin
   FMinLogLevel:=llInfo;
   FMaxInChunkSize:=131072;
   FMaxInMessageSize:=8 * 1024 * 1024;
+  FMaxInReassemblyBytes:=0;
   FMaxInChunkStreams:=64;
   FProtocolDefaultsSent:=False;
   FReconnectRequestDescription:='';
@@ -444,6 +448,7 @@ begin
   FNextAckAt:=FAckWindowSize;
   FReassembler:=TRtmpChunkReassembler.Create(FInChunkSize);
   FReassembler.MaxMessageSize:=FMaxInMessageSize;
+  FReassembler.MaxBufferedBytes:=FMaxInReassemblyBytes;
   FReassembler.MaxChunkStreams:=FMaxInChunkStreams;
   ResetStats;
 end;
@@ -1391,6 +1396,13 @@ begin
   FMaxInMessageSize:=AValue;
   if FReassembler <> nil then
     FReassembler.MaxMessageSize:=AValue;
+end;
+
+procedure TRtmpServerSession.SetMaxInReassemblyBytes(AValue: UInt64);
+begin
+  FMaxInReassemblyBytes:=AValue;
+  if FReassembler <> nil then
+    FReassembler.MaxBufferedBytes:=AValue;
 end;
 
 procedure TRtmpServerSession.SendBuffer(ABuffer: Pointer; ACount: Integer);

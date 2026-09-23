@@ -95,6 +95,7 @@ type
     MaxSessions: Integer;
     MaxChunkSize: Integer;
     MaxMessageSize: Integer;
+    MaxReassemblyBytes: UInt64;
     MaxChunkStreams: Integer;
     ReadTimeoutMS: Integer;
     WriteTimeoutMS: Integer;
@@ -213,6 +214,8 @@ type
     TrimEventsByAge: UInt64;
     RetainedPackets: Integer;
     RetainedBytes: UInt64;
+    FPinnedBudgetBytes: UInt64;
+    FPinnedBudgetDrops: UInt64;
     HasMetadata: Boolean;
     HasAudioConfig: Boolean;
     HasVideoConfig: Boolean;
@@ -427,6 +430,7 @@ begin
   Result.MaxSessions:=8;
   Result.MaxChunkSize:=131072;
   Result.MaxMessageSize:=8 * 1024 * 1024;
+  Result.MaxReassemblyBytes:=0;
   Result.MaxChunkStreams:=64;
   Result.ReadTimeoutMS:=10000;
   Result.WriteTimeoutMS:=10000;

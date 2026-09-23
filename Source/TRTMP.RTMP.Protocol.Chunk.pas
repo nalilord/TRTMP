@@ -45,6 +45,8 @@ type
     FInputBuffer: TBytes;
     FInputStart: Integer;
     FInChunkSize: Integer;
+    FMaxBufferedBytes: UInt64;
+    FActiveBytes: UInt64;
     FMaxMessageSize: Integer;
     FMaxChunkStreams: Integer;
     FStates: TObjectList;
@@ -72,11 +74,14 @@ type
     procedure SetInChunkSize(AValue: Integer);
     procedure SetMaxChunkStreams(AValue: Integer);
     procedure SetMaxMessageSize(AValue: Integer);
+    procedure SetMaxBufferedBytes(AValue: UInt64);
     function TryReadMessage(out AMessage: TRtmpChunkMessage): Boolean;
 
     property InChunkSize: Integer read FInChunkSize write SetInChunkSize;
     property MaxChunkStreams: Integer read FMaxChunkStreams write SetMaxChunkStreams;
     property MaxMessageSize: Integer read FMaxMessageSize write SetMaxMessageSize;
+    property MaxBufferedBytes: UInt64 read FMaxBufferedBytes write SetMaxBufferedBytes;
+    property ActiveBytes: UInt64 read FActiveBytes;
   end;
 
 implementation
@@ -95,6 +100,8 @@ begin
   FStates:=TObjectList.Create(True);
   FInputStart:=0;
   FMaxMessageSize:=0;
+  FMaxBufferedBytes:=0;
+  FActiveBytes:=0;
   FMaxChunkStreams:=0;
   SetInChunkSize(AInChunkSize);
 end;
@@ -113,6 +120,7 @@ begin
   if State = nil then
     Exit;
 
+  Dec(FActiveBytes, UInt64(Length(State.ActivePayload)));
   State.ActivePayload:=nil;
   State.ClearActive;
 end;
@@ -126,6 +134,9 @@ begin
 
   CompactInputBuffer;
   OldLength:=Length(FInputBuffer);
+  if (FMaxBufferedBytes > 0) AND
+    (UInt64(Length(ABytes)) > FMaxBufferedBytes - FActiveBytes - UInt64(OldLength)) then
+    raise ERtmpProtocolError.Create('RTMP reassembly input exceeds buffered byte budget');
   SetLength(FInputBuffer, OldLength + Length(ABytes));
   Move(ABytes[0], FInputBuffer[OldLength], Length(ABytes));
 end;
@@ -144,6 +155,9 @@ begin
 
   CompactInputBuffer;
   OldLength:=Length(FInputBuffer);
+  if (FMaxBufferedBytes > 0) AND
+    (UInt64(ACount) > FMaxBufferedBytes - FActiveBytes - UInt64(OldLength)) then
+    raise ERtmpProtocolError.Create('RTMP reassembly input exceeds buffered byte budget');
   SetLength(FInputBuffer, OldLength + ACount);
   Move(ABuffer, FInputBuffer[OldLength], ACount);
 end;
@@ -153,6 +167,7 @@ begin
   FInputBuffer:=nil;
   FInputStart:=0;
   FStates.Clear;
+  FActiveBytes:=0;
 end;
 
 function TRtmpChunkReassembler.GetPendingPreview(AMaxBytes: Integer): TBytes;
@@ -351,6 +366,14 @@ begin
   FMaxMessageSize:=AValue;
 end;
 
+procedure TRtmpChunkReassembler.SetMaxBufferedBytes(AValue: UInt64);
+begin
+  if (AValue > 0) AND
+    (FActiveBytes + UInt64(PendingBytes) > AValue) then
+    raise ERtmpProtocolError.Create('RTMP reassembly data exceeds the new buffered byte budget');
+  FMaxBufferedBytes:=AValue;
+end;
+
 function TRtmpChunkReassembler.TryReadChunk(out AMessage: TRtmpChunkMessage): Boolean;
 var
   BasicHeader: TRtmpChunkBasicHeader;
@@ -446,9 +469,15 @@ begin
         raise ERtmpProtocolError.CreateFmt('RTMP message length %d exceeds configured maximum %d',
           [ResolvedHeader.MessageLength, FMaxMessageSize]);
 
-      State.Active:=True;
+      if (FMaxBufferedBytes > 0) AND
+        (UInt64(ResolvedHeader.MessageLength) >
+        FMaxBufferedBytes - FActiveBytes - UInt64(PendingBytes)) then
+        raise ERtmpProtocolError.Create('Active RTMP messages exceed reassembly budget');
+
       State.ActiveHeader:=ResolvedHeader;
       SetLength(State.ActivePayload, ResolvedHeader.MessageLength);
+      State.Active:=True;
+      Inc(FActiveBytes, UInt64(ResolvedHeader.MessageLength));
       State.ActiveBytesRead:=0;
     end;
 
@@ -471,6 +500,7 @@ begin
       AMessage.TimestampDelta:=State.ActiveHeader.TimestampDelta;
       AMessage.HasExtendedTimestamp:=State.ActiveHeader.HasExtendedTimestamp;
       AMessage.Payload:=State.ActivePayload;
+      Dec(FActiveBytes, UInt64(Length(State.ActivePayload)));
 
       PreviousTimestamp:=0;
       if State.LastHeaderValid then
