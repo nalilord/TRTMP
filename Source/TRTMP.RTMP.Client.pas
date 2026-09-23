@@ -140,7 +140,8 @@ type
     FTimestampStateInitialized: Boolean;
     function BuildPublishInfo(out ATarget: TRtmpTargetInfo): Boolean;
     procedure CloseConnection;
-    function EstablishPublishSession(out ATarget: TRtmpTargetInfo): Boolean;
+    function EstablishPublishSession(out ATarget: TRtmpTargetInfo;
+      AReassembler: TRtmpChunkReassembler): Boolean;
     function HandleIncomingCommand(const AMessage: TRtmpChunkMessage;
       var AResponseState: TRtmpClientResponseState): Boolean;
     function HandleIncomingMessage(const AMessage: TRtmpChunkMessage;
@@ -582,11 +583,11 @@ begin
 end;
 
 function TRtmpClientRelayThread.EstablishPublishSession(
-  out ATarget: TRtmpTargetInfo): Boolean;
+  out ATarget: TRtmpTargetInfo;
+  AReassembler: TRtmpChunkReassembler): Boolean;
 var
   ConnectInfo: TRtmpAmf0Object;
   ResponseState: TRtmpClientResponseState;
-  Reassembler: TRtmpChunkReassembler;
   TlsOptions: TRtmpTlsClientOptions;
   TlsTransportFactory: IRtmpTlsTransportFactory;
   WaitDeadline: UInt64;
@@ -661,76 +662,71 @@ begin
     ConnectInfo.Free;
   end;
 
-  Reassembler:=TRtmpChunkReassembler.Create(FIncomingChunkSize);
-  try
-    ResponseState:=Default(TRtmpClientResponseState);
+  ResponseState:=Default(TRtmpClientResponseState);
 
-    SendCommandMessage(3, 0, BuildCommandValueArray([
-      TRtmpAmf0String.Create('releaseStream'),
-      TRtmpAmf0Number.Create(2),
-      TRtmpAmf0Null.Create,
-      TRtmpAmf0String.Create(ATarget.StreamKey)
-    ]));
+  SendCommandMessage(3, 0, BuildCommandValueArray([
+    TRtmpAmf0String.Create('releaseStream'),
+    TRtmpAmf0Number.Create(2),
+    TRtmpAmf0Null.Create,
+    TRtmpAmf0String.Create(ATarget.StreamKey)
+  ]));
 
-    SendCommandMessage(3, 0, BuildCommandValueArray([
-      TRtmpAmf0String.Create('FCPublish'),
-      TRtmpAmf0Number.Create(3),
-      TRtmpAmf0Null.Create,
-      TRtmpAmf0String.Create(ATarget.StreamKey)
-    ]));
+  SendCommandMessage(3, 0, BuildCommandValueArray([
+    TRtmpAmf0String.Create('FCPublish'),
+    TRtmpAmf0Number.Create(3),
+    TRtmpAmf0Null.Create,
+    TRtmpAmf0String.Create(ATarget.StreamKey)
+  ]));
 
-    SendCommandMessage(3, 0, BuildCommandValueArray([
-      TRtmpAmf0String.Create('createStream'),
-      TRtmpAmf0Number.Create(4),
-      TRtmpAmf0Null.Create
-    ]));
+  SendCommandMessage(3, 0, BuildCommandValueArray([
+    TRtmpAmf0String.Create('createStream'),
+    TRtmpAmf0Number.Create(4),
+    TRtmpAmf0Null.Create
+  ]));
 
-    WaitDeadline:=RtmpGetTickCount64 + 1500;
-    while (NOT Terminated) AND (RtmpGetTickCount64 < WaitDeadline) do
-    begin
-      PumpIncomingMessages(Reassembler, 100, ResponseState);
-      if ResponseState.Failed then
-        RaiseResponseFailure(ResponseState, 'session setup');
-      if ResponseState.ConnectAccepted AND ResponseState.CreateStreamAccepted then
-        Break;
-    end;
-
+  WaitDeadline:=RtmpGetTickCount64 + 1500;
+  while (NOT Terminated) AND (RtmpGetTickCount64 < WaitDeadline) do
+  begin
+    PumpIncomingMessages(AReassembler, 100, ResponseState);
     if ResponseState.Failed then
       RaiseResponseFailure(ResponseState, 'session setup');
-    if NOT (ResponseState.ConnectAccepted AND ResponseState.CreateStreamAccepted) then
-      raise Exception.Create('RTMP target did not complete connect/createStream handshake');
+    if ResponseState.ConnectAccepted AND ResponseState.CreateStreamAccepted then
+      Break;
+  end;
 
-    if ResponseState.StreamID <> 0 then
-      FMessageStreamID:=ResponseState.StreamID;
-    if FMessageStreamID = 0 then
-      FMessageStreamID:=1;
+  if ResponseState.Failed then
+    RaiseResponseFailure(ResponseState, 'session setup');
+  if NOT (ResponseState.ConnectAccepted AND ResponseState.CreateStreamAccepted) then
+    raise Exception.Create('RTMP target did not complete connect/createStream handshake');
 
-    SendCommandMessage(8, FMessageStreamID, BuildCommandValueArray([
-      TRtmpAmf0String.Create('publish'),
-      TRtmpAmf0Number.Create(0),
-      TRtmpAmf0Null.Create,
-      TRtmpAmf0String.Create(ATarget.StreamKey),
-      TRtmpAmf0String.Create('live')
-    ]));
+  if ResponseState.StreamID <> 0 then
+    FMessageStreamID:=ResponseState.StreamID;
+  if FMessageStreamID = 0 then
+    FMessageStreamID:=1;
 
-    WaitDeadline:=RtmpGetTickCount64 + 1500;
-    while (NOT Terminated) AND (RtmpGetTickCount64 < WaitDeadline) AND
-      (NOT ResponseState.PublishAccepted) do
-    begin
-      PumpIncomingMessages(Reassembler, 1000, ResponseState);
-      if ResponseState.Failed then
-        RaiseResponseFailure(ResponseState, 'publish');
-    end;
+  SendCommandMessage(8, FMessageStreamID, BuildCommandValueArray([
+    TRtmpAmf0String.Create('publish'),
+    TRtmpAmf0Number.Create(0),
+    TRtmpAmf0Null.Create,
+    TRtmpAmf0String.Create(ATarget.StreamKey),
+    TRtmpAmf0String.Create('live')
+  ]));
 
+  WaitDeadline:=RtmpGetTickCount64 + 1500;
+  while (NOT Terminated) AND (RtmpGetTickCount64 < WaitDeadline) AND
+    (NOT ResponseState.PublishAccepted) do
+  begin
+    PumpIncomingMessages(AReassembler, 1000, ResponseState);
     if ResponseState.Failed then
       RaiseResponseFailure(ResponseState, 'publish');
-    if NOT ResponseState.PublishAccepted then
-      raise Exception.Create('RTMP target did not confirm publish');
-
-    Result:=True;
-  finally
-    Reassembler.Free;
   end;
+
+  if ResponseState.Failed then
+    RaiseResponseFailure(ResponseState, 'publish');
+  if NOT ResponseState.PublishAccepted then
+    raise Exception.Create('RTMP target did not confirm publish');
+
+  Result:=True;
 end;
 
 function TRtmpClientRelayThread.RunStreamingSession: Boolean;
@@ -747,6 +743,9 @@ begin
   Result:=False;
   FSessionEstablished:=False;
   ResetTimestampState;
+  FIncomingChunkSize:=128;
+  FMessageStreamID:=1;
+  FNextSequenceNo:=0;
   if (FClient.Config.RequiredAudioTrackID >= 0) AND
     ((FClient.FBuffer = nil) OR
      (NOT FClient.FBuffer.HasAudioTrackConfig(
@@ -756,21 +755,21 @@ begin
     raise Exception.CreateFmt(
       'Required audio track set 0,%d has incomplete retained codec configuration',
       [FClient.Config.RequiredAudioTrackID]);
-  if NOT EstablishPublishSession(Target) then
-    Exit(False);
-  FCurrentTarget:=Target;
-
-  FClient.ChangeState(csStreaming);
-  FClient.Log(llInfo, 'client',
-    Format('Publish established target=%s app=%s stream=%s tsMode=%s',
-      [Target.Endpoint.Address, Target.AppName, Target.StreamKey,
-       TimestampModeName(FClient.Config.TimestampMode)]));
-  FSessionEstablished:=True;
-  if Assigned(FClient.FOnConnected) then
-    FClient.FOnConnected(FClient);
-
   Reassembler:=TRtmpChunkReassembler.Create(FIncomingChunkSize);
   try
+    if NOT EstablishPublishSession(Target, Reassembler) then
+      Exit(False);
+    FCurrentTarget:=Target;
+
+    FClient.ChangeState(csStreaming);
+    FClient.Log(llInfo, 'client',
+      Format('Publish established target=%s app=%s stream=%s tsMode=%s',
+        [Target.Endpoint.Address, Target.AppName, Target.StreamKey,
+         TimestampModeName(FClient.Config.TimestampMode)]));
+    FSessionEstablished:=True;
+    if Assigned(FClient.FOnConnected) then
+      FClient.FOnConnected(FClient);
+
     ResponseState:=Default(TRtmpClientResponseState);
     if FReconnectRequestPending then
     begin
@@ -1909,6 +1908,8 @@ begin
   try
     Inc(FStats.PacketsSent);
     Inc(FStats.BytesSent, UInt64(APacket.PayloadSize));
+    if APacket.SequenceNo > FStats.LastPacketSequence then
+      FStats.LastPacketSequence:=APacket.SequenceNo;
     FStats.LastSendTick:=RtmpGetTickCount64;
     RecalculateBitrate;
   finally

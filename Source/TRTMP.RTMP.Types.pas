@@ -266,6 +266,7 @@ type
   TRtmpClientStats = record
     BytesSent: UInt64;
     PacketsSent: UInt64;
+    LastPacketSequence: UInt64;
     CurrentBitrate: Double;
     AverageBitrate: Double;
     Reconnects: UInt64;

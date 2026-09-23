@@ -62,6 +62,7 @@ type
     function GetCodecHeadersSnapshotBounded(AMaxPackets: Integer;
       AMaxBytes: UInt64; out ATruncated: Boolean): TRtmpPacketArray;
     function GetLatestKeyframe: TRtmpPacket;
+    function GetLatestSequenceNo: UInt64;
     function HasAudioTrackConfig(ATrackID: Integer): Boolean;
     function HasVideoTrackConfig(ATrackID: Integer): Boolean;
     function GetSinceSequence(ASequenceNo: UInt64): TRtmpPacketArray;
@@ -573,6 +574,18 @@ begin
   FLock.Acquire;
   try
     Result:=FLatestKeyframe;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TRtmpCircularBuffer.GetLatestSequenceNo: UInt64;
+begin
+  FLock.Acquire;
+  try
+    Result:=0;
+    if FItems.Count > 0 then
+      Result:=TRtmpPacket(FItems.Last).SequenceNo;
   finally
     FLock.Release;
   end;
