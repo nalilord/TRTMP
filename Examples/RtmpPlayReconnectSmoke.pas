@@ -44,6 +44,17 @@ begin
     Result[I]:=AValues[I];
 end;
 
+function LargeVideoPayload(AFrameType, AMarker: Byte): TBytes;
+begin
+  SetLength(Result, 8201);
+  FillChar(Result[0], Length(Result), AMarker);
+  Result[0]:=AFrameType;
+  Result[1]:=1;
+  Result[2]:=0;
+  Result[3]:=0;
+  Result[4]:=0;
+end;
+
 function BuildObject(const APairs: array of const): TRtmpAmf0Object;
 var
   I: Integer;
@@ -245,6 +256,7 @@ var
   Connection: IRtmpConnection;
   Deadline: UInt64;
   EventType: Word;
+  I: Integer;
   MessageOut: TRtmpChunkMessage;
   Reader: TRtmpByteReader;
   Received: Integer;
@@ -320,6 +332,12 @@ begin
               begin
                 if (Length(MessageOut.Payload) > 1) AND (MessageOut.Payload[1] = $00) then
                   Continue;
+                if (Length(MessageOut.Payload) <> 8201) OR
+                  (MessageOut.Payload[8199] <> MessageOut.Payload[5]) then
+                  raise Exception.Create('Playback extended timestamp payload corruption');
+                for I:=5 to High(MessageOut.Payload) do
+                  if MessageOut.Payload[I] <> MessageOut.Payload[5] then
+                    raise Exception.Create('Playback extended timestamp payload changed');
                 Inc(Result.VideoPackets);
                 if Result.FirstVideoTimestamp = High(UInt32) then
                   Result.FirstVideoTimestamp:=MessageOut.Timestamp;
@@ -362,19 +380,19 @@ begin
     PlaybackBuffer.Push(TRtmpPacket.Create(mtVideo, 0, 0, 1, 6,
       TRtmpSharedPayload.Create(Bytes([$17, $00, $00, $00, $00, $01, $64, $00, $1E])),
       [pfIsVideo, pfIsCodecConfig, pfIsSequenceHeader], 3));
-    PlaybackBuffer.Push(TRtmpPacket.Create(mtVideo, 100, 0, 1, 6,
-      TRtmpSharedPayload.Create(Bytes([$17, $01, $00, $00, $00, $AA])),
+    PlaybackBuffer.Push(TRtmpPacket.Create(mtVideo, $FFFFFF, 0, 1, 6,
+      TRtmpSharedPayload.Create(LargeVideoPayload($17, $AA)),
       [pfIsVideo, pfIsKeyframe], 4));
 
     Server.Start;
     try
       Result1:=RunPlaySession(TransportFactory, 1961, 'reconnect-play');
 
-      PlaybackBuffer.Push(TRtmpPacket.Create(mtVideo, 1000, 0, 1, 6,
-        TRtmpSharedPayload.Create(Bytes([$17, $01, $00, $00, $00, $BB])),
+      PlaybackBuffer.Push(TRtmpPacket.Create(mtVideo, $1000000, 0, 1, 6,
+        TRtmpSharedPayload.Create(LargeVideoPayload($17, $BB)),
         [pfIsVideo, pfIsKeyframe], 5));
-      PlaybackBuffer.Push(TRtmpPacket.Create(mtVideo, 1040, 0, 1, 6,
-        TRtmpSharedPayload.Create(Bytes([$27, $01, $00, $00, $00, $CC])),
+      PlaybackBuffer.Push(TRtmpPacket.Create(mtVideo, $1000040, 0, 1, 6,
+        TRtmpSharedPayload.Create(LargeVideoPayload($27, $CC)),
         [pfIsVideo], 6));
 
       Result2:=RunPlaySession(TransportFactory, 1961, 'reconnect-play');
@@ -388,15 +406,15 @@ begin
 
   if NOT (Result1.GotStreamBegin AND Result1.GotPlayReset AND Result1.GotPlayStart) then
     raise Exception.Create('Play reconnect smoke failed: first session did not establish play');
-  if Result1.FirstVideoTimestamp <> 100 then
+  if Result1.FirstVideoTimestamp <> $FFFFFF then
     raise Exception.CreateFmt(
-      'Play reconnect smoke failed: expected first session first video timestamp 100, got %d',
+      'Play reconnect smoke failed: expected first session first video timestamp 16777215, got %d',
       [Result1.FirstVideoTimestamp]);
   if NOT (Result2.GotStreamBegin AND Result2.GotPlayReset AND Result2.GotPlayStart) then
     raise Exception.Create('Play reconnect smoke failed: second session did not establish play');
-  if Result2.FirstVideoTimestamp <> 1000 then
+  if Result2.FirstVideoTimestamp <> $1000000 then
     raise Exception.CreateFmt(
-      'Play reconnect smoke failed: expected reconnect first video timestamp 1000, got %d',
+      'Play reconnect smoke failed: expected reconnect first video timestamp 16777216, got %d',
       [Result2.FirstVideoTimestamp]);
 
   WriteLn(Format(

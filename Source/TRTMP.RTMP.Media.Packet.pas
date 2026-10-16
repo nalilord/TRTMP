@@ -43,6 +43,7 @@ type
     FFlags: TRtmpPacketFlags;
     FArrivalTick: TRtmpTick;
     FSequenceNo: UInt64;
+    FMediaOrdinal: UInt64;
   public
     constructor Create(AMessageType: TRtmpMessageType; ATimestamp,
       ATimestampDelta, AMessageStreamID, AChunkStreamID: UInt32;
@@ -62,6 +63,8 @@ type
     property Flags: TRtmpPacketFlags read FFlags;
     property ArrivalTick: TRtmpTick read FArrivalTick;
     property SequenceNo: UInt64 read FSequenceNo;
+    // Assigned by the owning buffer; zero identifies non-frame messages.
+    property MediaOrdinal: UInt64 read FMediaOrdinal write FMediaOrdinal;
   end;
 
   TRtmpPacketArray = array of TRtmpPacket;
@@ -115,6 +118,7 @@ begin
   Result:=TRtmpPacket.Create(FMessageType, FTimestamp, FTimestampDelta,
     FMessageStreamID, FChunkStreamID, FPayload, FFlags, FSequenceNo,
     FArrivalTick);
+  Result.FMediaOrdinal:=FMediaOrdinal;
 end;
 
 function TRtmpPacket.HasFlag(AFlag: TRtmpPacketFlag): Boolean;

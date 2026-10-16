@@ -1687,7 +1687,7 @@ begin
       begin
         WriteChunkBasicHeader(Writer, hfType3, AChunkStreamID);
         if Header.HasExtendedTimestamp then
-          WriteChunkMessageHeader(Writer, TRtmpChunkMessageHeader(Header));
+          Writer.WriteUInt32BE(ATimestamp);
       end;
 
       ChunkSize:=Length(APayload) - ChunkOffset;

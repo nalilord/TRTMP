@@ -42,6 +42,8 @@ type
     FLastBitrateTick: TRtmpTick;
     FOutChunkSize: UInt32;
     FPeerEnhancedCapabilities: UInt32;
+    FDeliveryBaseline: UInt64;
+    FDeliveryFinalized: Boolean;
     procedure ChangeState(AState: TRtmpClientState);
     procedure CloseConnection;
     function CurrentState: TRtmpClientState;
@@ -51,6 +53,7 @@ type
     procedure NoteReconnectRequest;
     procedure NoteDroppedPackets(ACount: UInt64);
     procedure NoteSentPacket(const APacket: TRtmpPacket);
+    procedure AccountUnavailableMedia(AFinal: Boolean);
     procedure RecalculateBitrate;
     procedure Initialize(const AConfig: TRtmpClientConfig);
     procedure ResetStats;
@@ -64,6 +67,7 @@ type
     procedure AttachBuffer(ABuffer: TRtmpCircularBuffer);
     function GetStats: TRtmpClientStats;
     procedure SendPacket(const APacket: TRtmpPacket);
+    procedure SetDeliveryBaseline(AOrdinal: UInt64);
     procedure RequestStop;
     procedure Start;
     procedure Stop;
@@ -803,6 +807,7 @@ begin
         if FClient.FBuffer.GetCoherentBootstrapSequenceNo(
           FClient.Config.ReaderMaxLagMS) <> 0 then
           SendInitialSnapshot;
+        FClient.AccountUnavailableMedia(False);
         RtmpSleepMS(10);
         Continue;
       end;
@@ -852,6 +857,7 @@ begin
       if FFastReconnect then
         Break;
 
+      FClient.AccountUnavailableMedia(False);
       RtmpSleepMS(10);
     end;
   finally
@@ -886,6 +892,7 @@ begin
       end;
     end;
 
+    FClient.AccountUnavailableMedia(False);
     ImmediateReconnect:=FFastReconnect;
     FFastReconnect:=False;
     CloseConnection;
@@ -919,6 +926,7 @@ begin
     while (DelayRemainingMS > 0) AND (NOT Terminated) AND
       (FClient.CurrentState <> csStopped) do
     begin
+      FClient.AccountUnavailableMedia(False);
       if DelayRemainingMS > 100 then
         RtmpSleepMS(100)
       else
@@ -939,6 +947,7 @@ begin
   end;
 
   CloseConnection;
+  FClient.AccountUnavailableMedia(True);
   if FClient.CurrentState <> csStopped then
     FClient.ChangeState(csStopped);
 end;
@@ -1657,7 +1666,7 @@ begin
       begin
         WriteChunkBasicHeader(Writer, hfType3, AChunkStreamID);
         if Header.HasExtendedTimestamp then
-          WriteChunkMessageHeader(Writer, TRtmpChunkMessageHeader(Header));
+          Writer.WriteUInt32BE(ATimestamp);
       end;
 
       ChunkDataSize:=Length(APayload) - ChunkOffset;
@@ -1809,8 +1818,18 @@ begin
 end;
 
 procedure TRtmpClient.AttachBuffer(ABuffer: TRtmpCircularBuffer);
+var
+  FirstOrdinal, LastOrdinal: UInt64;
 begin
   FBuffer:=ABuffer;
+  FDeliveryFinalized:=False;
+  FDeliveryBaseline:=0;
+  if ABuffer <> nil then
+  begin
+    ABuffer.GetMediaPacketRange(0, FirstOrdinal, LastOrdinal);
+    FDeliveryBaseline:=LastOrdinal;
+  end;
+  FStats.FAccountedMediaOrdinal:=FDeliveryBaseline;
 end;
 
 procedure TRtmpClient.ChangeState(AState: TRtmpClientState);
@@ -1899,6 +1918,47 @@ begin
   end;
 end;
 
+procedure TRtmpClient.AccountUnavailableMedia(AFinal: Boolean);
+var
+  FirstOrdinal, LastOrdinal, ThroughOrdinal: UInt64;
+  MaxAgeMS: UInt64;
+begin
+  if FBuffer = nil then
+    Exit;
+  MaxAgeMS:=0;
+  if FConfig.ReaderBatchMaxPackets > 0 then
+    MaxAgeMS:=FConfig.ReaderMaxLagMS;
+  // The worker calls this between sends; Stop also calls it after joining.
+  // An in-flight write must finish or fail before finalizing its loss.
+  FBuffer.GetMediaPacketRange(MaxAgeMS, FirstOrdinal, LastOrdinal, FConfig.ReaderBatchMaxPackets > 0);
+  ThroughOrdinal:=FirstOrdinal - 1;
+  if AFinal then
+    ThroughOrdinal:=LastOrdinal;
+  FLock.Acquire;
+  try
+    if ThroughOrdinal > FStats.FAccountedMediaOrdinal then
+    begin
+      Inc(FStats.FDroppedMediaPackets, ThroughOrdinal - FStats.FAccountedMediaOrdinal);
+      FStats.FAccountedMediaOrdinal:=ThroughOrdinal;
+    end;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TRtmpClient.SetDeliveryBaseline(AOrdinal: UInt64);
+begin
+  FLock.Acquire;
+  try
+    if FRelayThread <> nil then
+      raise EInvalidOpException.Create('Delivery baseline requires a stopped client');
+    FDeliveryBaseline:=AOrdinal;
+    FStats.FAccountedMediaOrdinal:=AOrdinal;
+  finally
+    FLock.Release;
+  end;
+end;
+
 procedure TRtmpClient.NoteSentPacket(const APacket: TRtmpPacket);
 begin
   if APacket = nil then
@@ -1906,6 +1966,12 @@ begin
 
   FLock.Acquire;
   try
+    if APacket.MediaOrdinal > FStats.FAccountedMediaOrdinal then
+    begin
+      Inc(FStats.FDroppedMediaPackets, APacket.MediaOrdinal - FStats.FAccountedMediaOrdinal - 1);
+      Inc(FStats.FForwardedMediaPackets);
+      FStats.FAccountedMediaOrdinal:=APacket.MediaOrdinal;
+    end;
     Inc(FStats.PacketsSent);
     Inc(FStats.BytesSent, UInt64(APacket.PayloadSize));
     if APacket.SequenceNo > FStats.LastPacketSequence then
@@ -2004,6 +2070,8 @@ begin
     if FStopping OR (FRelayThread <> nil) OR (FState <> csStopped) then
       Exit;
     FillChar(FStats, SizeOf(FStats), 0);
+    FStats.FAccountedMediaOrdinal:=FDeliveryBaseline;
+    FDeliveryFinalized:=False;
     FStartedAt:=RtmpGetTickCount64;
     FLastBitrateTick:=FStartedAt;
     FLastBitrateBytes:=0;
@@ -2042,6 +2110,11 @@ begin
     RequestStop;
     if RelayThread <> nil then
       RelayThread.WaitFor;
+    if NOT FDeliveryFinalized then
+    begin
+      AccountUnavailableMedia(True);
+      FDeliveryFinalized:=True;
+    end;
   finally
     FLock.Acquire;
     try

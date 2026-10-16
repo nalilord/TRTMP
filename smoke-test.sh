@@ -77,6 +77,8 @@ build_fpc_examples=(
   Examples/RtmpClientReconnectSmoke.pas
   Examples/RtmpClientRejectSmoke.pas
   Examples/RtmpClientTimestampSmoke.pas
+  Examples/RtmpExtendedTimestampSmoke.pas
+  Examples/RtmpDeliveryAccountingSmoke.pas
   Examples/RtmpClientReconnectLiveEdgeSmoke.pas
   Examples/RtmpServerHardeningSmoke.pas
   Examples/RtmpServerCommandFlowSmoke.pas
@@ -105,6 +107,8 @@ runtime_socket=(
   ./Bin/linux/RtmpClientReconnectSmoke
   ./Bin/linux/RtmpClientRejectSmoke
   ./Bin/linux/RtmpClientTimestampSmoke
+  ./Bin/linux/RtmpExtendedTimestampSmoke
+  ./Bin/linux/RtmpDeliveryAccountingSmoke
   ./Bin/linux/RtmpClientReconnectLiveEdgeSmoke
   ./Bin/linux/RtmpServerHardeningSmoke
   ./Bin/linux/RtmpServerCommandFlowSmoke
@@ -175,6 +179,9 @@ if [[ "$RUN_DELPHI" -eq 1 ]]; then
   ./build-delphi.sh Examples/RtmpAnalyzerEnhancedSmoke.pas Win64
   ./build-delphi.sh Examples/RtmpApiErgonomicsSmoke.pas Win64
   ./build-delphi.sh Examples/RtmpClientSmoke.pas Win64
+  ./build-delphi.sh Examples/RtmpExtendedTimestampSmoke.pas Win64
+  ./build-delphi.sh Examples/RtmpDeliveryAccountingSmoke.pas Win64
+  ./build-delphi.sh Examples/RtmpPlayReconnectSmoke.pas Win64
   ./build-delphi.sh Examples/RtmpGatewayConsole.pas Win64
   ./build-delphi.sh Examples/RtmpGraphGatewayConsole.pas Win64
   ./build-delphi.sh Examples/RtmpPlayConsole.pas Win64

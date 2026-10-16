@@ -273,6 +273,10 @@ type
     ReconnectRequests: UInt64;
     DroppedPackets: UInt64;
     LastSendTick: UInt64;
+    // Unique media accounting within the attached buffer; reconnects retain the watermark.
+    FAccountedMediaOrdinal: UInt64;
+    FForwardedMediaPackets: UInt64;
+    FDroppedMediaPackets: UInt64;
   end;
 
 function DefaultRtmpServerConfig: TRtmpServerConfig;

@@ -33,6 +33,7 @@ type
     FCurrentBytes: UInt64;
     FMaxRetainedBytes: UInt64;
     FRetainedBudgetBytes: UInt64;
+    FMediaPacketsPushed: UInt64;
     function GetCount: Integer;
     function GetBootstrapSequenceNoLocked(AFallbackSequenceNo: UInt64): UInt64;
     function GetRetainedBytesLocked: UInt64;
@@ -63,6 +64,7 @@ type
       AMaxBytes: UInt64; out ATruncated: Boolean): TRtmpPacketArray;
     function GetLatestKeyframe: TRtmpPacket;
     function GetLatestSequenceNo: UInt64;
+    procedure GetMediaPacketRange(AMaxAgeMS: UInt64; out AFirstOrdinal, ALastOrdinal: UInt64; ACoherentOnly: Boolean = True);
     function HasAudioTrackConfig(ATrackID: Integer): Boolean;
     function HasVideoTrackConfig(ATrackID: Integer): Boolean;
     function GetSinceSequence(ASequenceNo: UInt64): TRtmpPacketArray;
@@ -155,6 +157,7 @@ begin
     FCurrentBytes:=0;
     FRetainedBudgetBytes:=0;
     FStats:=Default(TRtmpBufferStats);
+    FMediaPacketsPushed:=0;
     FStats.MaxPackets:=FMaxPackets;
     FStats.MaxBytes:=FMaxBytes;
     FStats.MaxDurationMS:=FMaxDurationMS;
@@ -815,8 +818,45 @@ begin
   end;
 end;
 
+procedure TRtmpCircularBuffer.GetMediaPacketRange(AMaxAgeMS: UInt64; out AFirstOrdinal, ALastOrdinal: UInt64; ACoherentOnly: Boolean);
+var
+  I: Integer;
+  NowTick: UInt64;
+  Packet: TRtmpPacket;
+begin
+  NowTick:=RtmpGetTickCount64;
+  FLock.Acquire;
+  try
+    ALastOrdinal:=FMediaPacketsPushed;
+    AFirstOrdinal:=ALastOrdinal + 1;
+    for I:=0 to FItems.Count - 1 do
+    begin
+      Packet:=TRtmpPacket(FItems[I]);
+      if (Packet.MediaOrdinal > 0) AND ((AMaxAgeMS = 0) OR (NowTick - Packet.ArrivalTick <= AMaxAgeMS)) then
+      begin
+        AFirstOrdinal:=Packet.MediaOrdinal;
+        Break;
+      end;
+    end;
+    if (FLatestKeyframe <> nil) AND (FLatestKeyframe.MediaOrdinal > 0) AND
+      (FLatestKeyframe.MediaOrdinal < AFirstOrdinal) AND
+      ((AMaxAgeMS = 0) OR (NowTick - FLatestKeyframe.ArrivalTick <= AMaxAgeMS)) AND
+      ((NOT ACoherentOnly) OR HasPacketWithSequenceNoLocked(FLatestKeyframe.SequenceNo) OR
+       HasPacketWithSequenceNoLocked(FLatestKeyframe.SequenceNo + 1)) then
+      AFirstOrdinal:=FLatestKeyframe.MediaOrdinal;
+  finally
+    FLock.Release;
+  end;
+end;
+
 procedure TRtmpCircularBuffer.PushLocked(APacket: TRtmpPacket);
 begin
+  APacket.MediaOrdinal:=0;
+  if (APacket.MessageType IN [mtAudio, mtVideo]) AND (NOT APacket.HasFlag(pfIsCodecConfig)) then
+  begin
+    Inc(FMediaPacketsPushed);
+    APacket.MediaOrdinal:=FMediaPacketsPushed;
+  end;
   if APacket.HasFlag(pfIsMetadata) then
     ReplacePinnedPacket(FLatestMetadata, APacket);
   if APacket.HasFlag(pfIsAudio) AND APacket.HasFlag(pfIsCodecConfig) then
