@@ -221,14 +221,18 @@ function WaitForSocket(ASocket: TRtmpSocketHandle; ARead, AWrite: Boolean;
 var
   ReadSet: TFDSet;
   WriteSet: TFDSet;
+  ExceptSet: TFDSet;
   ReadSetPtr: PFdSet;
   WriteSetPtr: PFdSet;
+  ExceptSetPtr: PFdSet;
   TimeValue: timeval;
 begin
   FD_ZERO(ReadSet);
   FD_ZERO(WriteSet);
+  FD_ZERO(ExceptSet);
   ReadSetPtr:=nil;
   WriteSetPtr:=nil;
+  ExceptSetPtr:=nil;
 
   if ARead then
   begin
@@ -240,11 +244,15 @@ begin
   begin
     _FD_SET(ASocket, WriteSet);
     WriteSetPtr:=@WriteSet;
+    // Winsock reports a failed non-blocking connect (e.g. refused) only in the except set;
+    // without it a refused connect waits for the full timeout. SO_ERROR then names the error.
+    _FD_SET(ASocket, ExceptSet);
+    ExceptSetPtr:=@ExceptSet;
   end;
 
   TimeValue.tv_sec:=ATimeoutMS DIV 1000;
   TimeValue.tv_usec:=(ATimeoutMS MOD 1000) * 1000;
-  Result:=select(0, ReadSetPtr, WriteSetPtr, nil, @TimeValue) > 0;
+  Result:=select(0, ReadSetPtr, WriteSetPtr, ExceptSetPtr, @TimeValue) > 0;
 end;
 {$ELSE}
 var

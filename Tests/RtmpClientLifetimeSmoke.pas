@@ -46,8 +46,10 @@ begin
   try
     Started:=RtmpGetTickCount64;
     Client.Start;
+    // Windows retransmits the SYN after a reset (MaxSynRetransmissions), so even a
+    // refused loopback connect takes about 2.3 s to fail there; Linux fails at once.
     while (Client.State <> csReconnecting) AND
-      (RtmpGetTickCount64 - Started < 1500) do
+      (RtmpGetTickCount64 - Started < 4000) do
       RtmpSleepMS(10);
     Check(Client.State = csReconnecting,
       'failed connection did not enter reconnect wait');
