@@ -1474,6 +1474,7 @@ var
   Cursor: PByte;
   Offset: Integer;
   Sent: Integer;
+  Timeout: Integer;
 begin
   if ACount <= 0 then
     Exit;
@@ -1481,11 +1482,14 @@ begin
   if ABuffer = nil then
     raise ERtmpTransportError.Create('Cannot send nil buffer');
 
+  Timeout:=FClient.Config.SendTimeoutMS;
+  if Timeout <= 0 then
+    Timeout:=10000;
   Cursor:=PByte(ABuffer);
   Offset:=0;
   while Offset < ACount do
   begin
-    Sent:=FClient.FConnection.Send(Cursor^, ACount - Offset, 10000);
+    Sent:=FClient.FConnection.Send(Cursor^, ACount - Offset, Timeout);
     if Sent <= 0 then
       raise ERtmpTransportError.Create('Outbound socket send timed out or failed');
     Inc(Cursor, Sent);

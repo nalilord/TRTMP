@@ -135,6 +135,9 @@ type
     ReconnectDelayMS: Integer;
     MaxReconnectDelayMS: Integer;
     ReconnectBoundaryTimeoutMS: Integer;
+    // Longest a media send may make no progress before the session is treated as lost and
+    // reconnected: a black-holed link or a peer that stopped reading. 0 means 10000.
+    SendTimeoutMS: Integer;
     ReaderBatchMaxPackets: Integer;
     ReaderBatchMaxBytes: UInt64;
     ReaderMaxLagMS: UInt32;
@@ -464,6 +467,7 @@ begin
   Result.ReconnectDelayMS:=1000;
   Result.MaxReconnectDelayMS:=15000;
   Result.ReconnectBoundaryTimeoutMS:=2000;
+  Result.SendTimeoutMS:=10000;
   Result.OutChunkSize:=4096;
   Result.TimestampMode:=tmPassThrough;
 end;
